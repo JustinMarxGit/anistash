@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Creates an anidl LXC on a Proxmox VE host. Run on the host as root:
+# Creates an anistash LXC on a Proxmox VE host. Run on the host as root:
 #
-#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/JustinMarxGit/anidl/main/ct/anidl.sh)"
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/JustinMarxGit/anistash/main/ct/anistash.sh)"
 #
 # Default settings ask nothing; Advanced settings walk through every option.
 # Any option can be preset as an environment variable, which skips its question:
@@ -10,24 +10,24 @@
 #   BRG  NET (dhcp or IP/CIDR)  GATE  IPV6 (auto|dhcp|none|IP/CIDR)  GATE6  DNS  SD  MAC  VLAN  MTU
 #   SSH (yes|no)  SSH_KEY (path to a public key file)  TAGS (a;b, or empty for none)  PORT  TZ  VERBOSE (yes|no)
 #
-#   e.g.  CTID=120 NET=192.168.1.50/24 GATE=192.168.1.1 bash -c "$(curl -fsSL …/ct/anidl.sh)"
+#   e.g.  CTID=120 NET=192.168.1.50/24 GATE=192.168.1.1 bash -c "$(curl -fsSL …/ct/anistash.sh)"
 set -Eeuo pipefail
 
-REPO="${ANIDL_REPO:-JustinMarxGit/anidl}"
+REPO="${ANISTASH_REPO:-JustinMarxGit/anistash}"
 RAW="https://raw.githubusercontent.com/$REPO/main"
 
 YW=$'\e[33m' GN=$'\e[1;92m' RD=$'\e[01;31m' BL=$'\e[36m' DGN=$'\e[32m' CL=$'\e[m' BOLD=$'\e[1m'
 CM="${GN}✓${CL}" CROSS="${RD}✗${CL}" HOLD="-"
-BACKTITLE="Proxmox VE · anidl LXC"
+BACKTITLE="Proxmox VE · AniStash LXC"
 
 header() {
     clear
     cat <<'EOF'
-                _     _ _
-   __ _ _ __   (_) __| | |
-  / _` | '_ \  | |/ _` | |
- | (_| | | | | | | (_| | |
-  \__,_|_| |_| |_|\__,_|_|   anime downloads for your media server
+              _     _            _
+   __ _ _ __ (_)___| |_ __ _ ___| |__
+  / _` | '_ \| / __| __/ _` / __| '_ \
+ | (_| | | | | \__ \ || (_| \__ \ | | |
+  \__,_|_| |_|_|___/\__\__,_|___/_| |_|   anime downloads for your media server
 
 EOF
 }
@@ -48,7 +48,7 @@ msg_ok() { stop_spinner; printf "\r\e[K %s %s\n" "$CM" "${GN}$1${CL}"; }
 msg_error() { stop_spinner; printf "\r\e[K %s %s\n" "$CROSS" "${RD}$1${CL}"; }
 msg_warn() { stop_spinner; printf "\r\e[K %s %s\n" "${YW}!${CL}" "${YW}$1${CL}"; }
 
-LOG="/tmp/anidl-lxc-$$.log"
+LOG="/tmp/anistash-lxc-$$.log"
 CREATED=""
 STEP="starting"
 on_error() {
@@ -57,7 +57,7 @@ on_error() {
     msg_error "Failed while: $STEP (line $line, exit $code)"
     echo -e "   Log: ${BL}$LOG${CL}"
     if [[ -n $CREATED ]] && whiptail --backtitle "$BACKTITLE" --title "Install failed" --yesno \
-        "Creating anidl failed while: $STEP.\n\nRemove the half-built container $CREATED?" 12 64; then
+        "Creating AniStash failed while: $STEP.\n\nRemove the half-built container $CREATED?" 12 64; then
         pct stop "$CREATED" &>/dev/null || true
         pct destroy "$CREATED" --purge &>/dev/null || true
         echo -e " ${CM} Removed container $CREATED"
@@ -72,7 +72,7 @@ on_interrupt() {
         echo -e " ${YW}Stopped.${CL} Container $CREATED was left in place. Either remove it:"
         echo "     pct stop $CREATED; pct destroy $CREATED --purge"
         echo "   or finish the install inside it (once its network works):"
-        echo "     pct exec $CREATED -- bash -c \"curl -fsSL $RAW/install/install.sh | ANIDL_PORT=${PORT:-8000} bash\""
+        echo "     pct exec $CREATED -- bash -c \"curl -fsSL $RAW/install/install.sh | ANISTASH_PORT=${PORT:-8000} bash\""
     fi
     exit 130
 }
@@ -102,7 +102,7 @@ storages() { pvesm status -content "$1" 2>/dev/null | awk 'NR>1 {print $1}'; }
 
 defaults() {
     CTID="${CTID:-$(pvesh get /cluster/nextid)}"
-    HN="${HN:-anidl}"
+    HN="${HN:-anistash}"
     PW="${PW:-}"
     OS_VERSION="${OS_VERSION:-newest}"
     DISK="${DISK:-8}"
@@ -137,7 +137,7 @@ defaults() {
     MTU="${MTU:-}"
     SSH="${SSH:-no}"
     SSH_KEY="${SSH_KEY:-}"
-    TAGS="${TAGS-anidl}"  # set but empty (TAGS=) means no tags
+    TAGS="${TAGS-anistash}"  # set but empty (TAGS=) means no tags
     PORT="${PORT:-8000}"
     TZ="${TZ:-$(cat /etc/timezone 2>/dev/null || timedatectl show -p Timezone --value 2>/dev/null || echo Etc/UTC)}"
     VERBOSE="${VERBOSE:-no}"
@@ -289,7 +289,7 @@ step_ssh() {
     return 0
 }
 step_app() {
-    preset PORT || { ask PORT "Web UI port" "Port for the anidl web UI:" || return 1; }
+    preset PORT || { ask PORT "Web UI port" "Port for the anistash web UI:" || return 1; }
     [[ $PORT =~ ^[0-9]+$ ]] && ((PORT >= 1 && PORT <= 65535)) || { bad "Port must be 1-65535."; return 2; }
     preset TZ || { ask TZ "Timezone" "Timezone (e.g. Europe/London):" || return 1; }
     [[ -f /usr/share/zoneinfo/$TZ ]] || { bad "Unknown timezone \"$TZ\"."; return 2; }
@@ -484,7 +484,7 @@ fix_container_os() {
     cexec 20 bash -c '[ "$(stat -c %U /)" = root ] || chown root:root /' >>"$LOG" 2>&1 || true
     # /etc without o+x stops apt's _apt user from reading resolv.conf
     cexec 20 bash -c '[ $(( 0$(stat -c %a /etc) & 1 )) -eq 1 ] || chmod o+x /etc' >>"$LOG" 2>&1 || true
-    # Nothing in anidl needs the boot to wait for "network online"
+    # Nothing in anistash needs the boot to wait for "network online"
     cexec 20 systemctl disable -q --now systemd-networkd-wait-online.service >>"$LOG" 2>&1 || true
 }
 
@@ -544,29 +544,29 @@ systemctl daemon-reload; systemctl restart container-getty@1.service' >>"$LOG" 2
 }
 
 install_app() {
-    STEP="installing anidl inside the container"
-    msg_info "Installing anidl (a few minutes)"
+    STEP="installing anistash inside the container"
+    msg_info "Installing AniStash (a few minutes)"
     run pct exec "$CTID" -- bash -c "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates"
     local verbose=0
     [[ $VERBOSE == yes ]] && verbose=1
     # Fetched on the host and handed over, like the community scripts do
     local installer
     installer="$(curl -fsSL "$RAW/install/install.sh")"
-    run pct exec "$CTID" -- env ANIDL_PORT="$PORT" ANIDL_REPO="$REPO" TZ="$TZ" ANIDL_VERBOSE="$verbose" \
+    run pct exec "$CTID" -- env ANISTASH_PORT="$PORT" ANISTASH_REPO="$REPO" TZ="$TZ" ANISTASH_VERBOSE="$verbose" \
         bash -c "$installer"
-    msg_ok "Installed anidl"
+    msg_ok "Installed AniStash"
 
     STEP="writing the container notes"
     IP="$(pct exec "$CTID" -- hostname -I | awk '{print $1}')"
     pct set "$CTID" --description "$(cat <<EOF
-# anidl
+# AniStash
 
 **Web UI:** [http://$IP:$PORT](http://$IP:$PORT)
 
-- Finish or redo setup: open the web UI, or run \`anidl-setup\` in this console
-- Update anidl: \`anidl-update\` (or Settings → System in the web UI)
-- Locked out: \`anidl-setup --reset-password\`
-- Logs: \`journalctl -u anidl -f\`
+- Finish or redo setup: open the web UI, or run \`anistash-setup\` in this console
+- Update anistash: \`anistash-update\` (or Settings → System in the web UI)
+- Locked out: \`anistash-setup --reset-password\`
+- Logs: \`journalctl -u anistash -f\`
 
 Source: https://github.com/$REPO
 EOF
@@ -581,8 +581,8 @@ main() {
     local mode="${MODE:-}"
     while :; do
         if [[ -z $mode ]]; then
-            mode="$(whiptail --backtitle "$BACKTITLE" --title "anidl LXC" --menu \
-                "Create a Debian LXC running anidl.\n\nDefault settings: $CORES cores, $RAM MB RAM, ${DISK} GB disk, DHCP on $BRG." \
+            mode="$(whiptail --backtitle "$BACKTITLE" --title "AniStash LXC" --menu \
+                "Create a Debian LXC running anistash.\n\nDefault settings: $CORES cores, $RAM MB RAM, ${DISK} GB disk, DHCP on $BRG." \
                 15 70 3 default "Default settings" advanced "Advanced settings (static IP, VLAN, storage…)" exit "Exit" \
                 3>&1 1>&2 2>&3)" || exit 0
         fi
@@ -602,7 +602,7 @@ main() {
     done
 
     header
-    echo -e "${BOLD}Creating anidl LXC${CL}\n"
+    echo -e "${BOLD}Creating AniStash LXC${CL}\n"
     summary | sed 's/^/   /'
     echo
     pick_template
@@ -612,9 +612,9 @@ main() {
     trap - ERR
 
     echo
-    echo -e " ${CM} ${GN}Done!${CL} anidl is running in container ${BL}$CTID${CL}."
+    echo -e " ${CM} ${GN}Done!${CL} AniStash is running in container ${BL}$CTID${CL}."
     echo -e "   Open ${BL}http://$IP:$PORT${CL} to finish setup (admin account, download locations, Jellyfin/Plex)."
-    echo -e "   ${DGN}Console tools inside the container: anidl-setup, anidl-update${CL}"
+    echo -e "   ${DGN}Console tools inside the container: anistash-setup, anistash-update${CL}"
     rm -f "$LOG"
 }
 

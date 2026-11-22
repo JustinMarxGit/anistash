@@ -13,15 +13,40 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 CREATE TABLE IF NOT EXISTS users (
-    id            INTEGER PRIMARY KEY,
-    username      TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL
+    id                   INTEGER PRIMARY KEY,
+    username             TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash        TEXT NOT NULL,          -- scrypt; plain passwords are never stored
+    role                 TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin', 'member', 'viewer')),
+    disabled             INTEGER NOT NULL DEFAULT 0,
+    must_change_password INTEGER NOT NULL DEFAULT 0,
+    created_at           INTEGER NOT NULL DEFAULT 0,
+    last_login_at        INTEGER NOT NULL DEFAULT 0
 );
 
+-- Only a SHA-256 of each session token is stored, so a copy of the database can't log anyone in
 CREATE TABLE IF NOT EXISTS sessions (
-    token      TEXT PRIMARY KEY,
-    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    expires_at INTEGER NOT NULL
+    token_hash   TEXT PRIMARY KEY,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at   INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL,
+    expires_at   INTEGER NOT NULL,
+    ip           TEXT NOT NULL DEFAULT '',
+    user_agent   TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS login_attempts (
+    key        TEXT NOT NULL,      -- 'user:<name>' or 'ip:<address>'
+    at         INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS login_attempts_key ON login_attempts (key, at);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id       INTEGER PRIMARY KEY,
+    at       INTEGER NOT NULL,
+    actor    TEXT NOT NULL,        -- username, or '-' when nobody is logged in
+    action   TEXT NOT NULL,
+    detail   TEXT NOT NULL DEFAULT '',
+    ip       TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS locations (
@@ -48,6 +73,7 @@ CREATE TABLE IF NOT EXISTS batches (
     position       REAL NOT NULL,
     warning        TEXT NOT NULL DEFAULT '',
     notified       INTEGER NOT NULL DEFAULT 0,
+    created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at     INTEGER NOT NULL
 );
 
@@ -113,14 +139,37 @@ def tx():
         conn.close()
 
 
+# Columns added after the first release: (table, column, definition)
+MIGRATIONS = [
+    ("users", "role", "TEXT NOT NULL DEFAULT 'admin'"),
+    ("users", "disabled", "INTEGER NOT NULL DEFAULT 0"),
+    ("users", "must_change_password", "INTEGER NOT NULL DEFAULT 0"),
+    ("users", "created_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("users", "last_login_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("batches", "created_by", "INTEGER REFERENCES users(id) ON DELETE SET NULL"),
+]
+
+
 def init() -> None:
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
     config.TMP_DIR.mkdir(parents=True, exist_ok=True)
+    config.DATA_DIR.chmod(0o700)
     conn = connect()
     try:
+        # Sessions from before token hashing stored raw tokens: drop them (everyone logs in again)
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(sessions)")}
+        if columns and "token_hash" not in columns:
+            conn.execute("DROP TABLE sessions")
         conn.executescript(SCHEMA)
+        for table, column, definition in MIGRATIONS:
+            if column not in {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
     finally:
         conn.close()
+    for path in (config.DB_PATH, config.DB_PATH.with_name(config.DB_PATH.name + "-wal"),
+                 config.DB_PATH.with_name(config.DB_PATH.name + "-shm")):
+        if path.exists():
+            path.chmod(0o600)  # password hashes and settings: readable by the service only
 
 
 def query(sql: str, params=()) -> list[sqlite3.Row]:

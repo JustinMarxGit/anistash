@@ -1,7 +1,7 @@
-"""Download locations: SMB/NFS shares mounted through anidl-helper, or local folders.
+"""Download locations: SMB/NFS shares mounted through anistash-helper, or local folders.
 
 The SMB password goes straight to the helper (which stores it root-only in
-/etc/anidl/creds) and is never written to the app database.
+/etc/anistash/creds) and is never written to the app database.
 """
 
 import asyncio
@@ -24,7 +24,7 @@ class LocationError(Exception):
 
 async def _helper(*args: str, payload: dict | None = None) -> dict:
     if not config.helper_available():
-        raise LocationError("Network shares can only be added in the anidl LXC (anidl-helper isn't installed here).")
+        raise LocationError("Network shares can only be added in the anistash LXC (anistash-helper isn't installed here).")
     proc = await asyncio.create_subprocess_exec(
         *config.SUDO, config.HELPER, *args,
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -37,9 +37,9 @@ async def _helper(*args: str, payload: dict | None = None) -> dict:
     try:
         result = json.loads(out.decode() or "{}")
     except json.JSONDecodeError:
-        raise LocationError(err.decode().strip() or "anidl-helper failed")
+        raise LocationError(err.decode().strip() or "anistash-helper failed")
     if not result.get("ok"):
-        raise LocationError(result.get("error") or err.decode().strip() or "anidl-helper failed")
+        raise LocationError(result.get("error") or err.decode().strip() or "anistash-helper failed")
     return result
 
 
@@ -92,7 +92,7 @@ def status(row) -> dict:
 
 def write_test(path: str) -> None:
     """Writes and deletes a file as the app user, so a read-only share fails here and not mid-download."""
-    probe = os.path.join(path, f".anidl-write-test-{uuid.uuid4().hex[:8]}")
+    probe = os.path.join(path, f".anistash-write-test-{uuid.uuid4().hex[:8]}")
     try:
         with open(probe, "w") as f:
             f.write("ok")

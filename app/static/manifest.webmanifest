@@ -1,6 +1,6 @@
 {
-  "name": "anidl",
-  "short_name": "anidl",
+  "name": "AniStash",
+  "short_name": "AniStash",
   "description": "Browse and download anime to your media server",
   "start_url": "/#/",
   "scope": "/",

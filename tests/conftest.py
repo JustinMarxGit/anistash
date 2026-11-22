@@ -28,7 +28,7 @@ def isolated(tmp_path, monkeypatch, fake_video):
     fake = HERE / "fake_ani_cli.sh"
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
-    monkeypatch.setattr(config, "DB_PATH", tmp_path / "data" / "anidl.db")
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "data" / "anistash.db")
     monkeypatch.setattr(config, "TMP_DIR", tmp_path / "data" / "tmp")
     monkeypatch.setattr(config, "ANI_CLI", str(fake))
     monkeypatch.setattr(config, "HELPER", str(tmp_path / "no-helper"))

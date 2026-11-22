@@ -1,5 +1,5 @@
 [Unit]
-Description=Weekly ani-cli and yt-dlp update for anidl
+Description=Weekly ani-cli and yt-dlp update for anistash
 
 [Timer]
 OnCalendar=weekly

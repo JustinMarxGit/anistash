@@ -1,0 +1,8 @@
+[Unit]
+Description=Update ani-cli and yt-dlp for anistash
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/anistash/anistash-helper update-tools

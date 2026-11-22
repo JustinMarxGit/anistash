@@ -2,9 +2,11 @@ from fastapi.testclient import TestClient
 
 from app import main, setup
 
+HEADERS = {"X-Requested-With": "anistash"}
+
 
 def client():
-    return TestClient(main.app)
+    return TestClient(main.app, headers=HEADERS)
 
 
 def test_setup_gate_login_and_completion(isolated):
@@ -14,9 +16,10 @@ def test_setup_gate_login_and_completion(isolated):
         assert c.post("/api/setup/admin", json={"username": "admin", "password": "short"}).status_code == 400
         assert c.post("/api/setup/admin", json={"username": "admin", "password": "longenough"}).status_code == 200
 
-        # A second admin can't be created without logging in
-        anon = TestClient(main.app)
-        assert anon.post("/api/setup/admin", json={"username": "x", "password": "longenough"}).status_code == 401
+        # A second admin can't be created through setup, logged in or not
+        anon = TestClient(main.app, headers=HEADERS)
+        assert anon.post("/api/setup/admin", json={"username": "x", "password": "longenough"}).status_code in (401, 403)
+        assert c.post("/api/setup/admin", json={"username": "y", "password": "longenough"}).status_code == 403
 
         assert c.get("/api/queue").status_code == 409  # setup not finished
         assert c.post("/api/setup/complete").status_code == 400  # no location yet
@@ -49,4 +52,9 @@ def test_setup_cli_reset_password(isolated, monkeypatch, capsys):
     assert setup.main(["reset-password"]) == 0
     from app import auth
     assert auth.login("admin", "secondpassword")
-    assert not auth.login("admin", "firstpassword")
+    try:
+        auth.login("admin", "firstpassword")
+    except auth.AuthError:
+        pass
+    else:
+        raise AssertionError("old password still works")

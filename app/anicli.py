@@ -45,7 +45,7 @@ def _env(capture: str | None = None, **extra) -> dict:
         TERM="dumb",
     )
     if capture:
-        env["ANIDL_CAPTURE"] = capture
+        env["ANISTASH_CAPTURE"] = capture
     env.update(extra)
     return env
 
@@ -56,6 +56,10 @@ def _friendly_error(output: str) -> str:
         return "The anime source is blocking requests (Cloudflare). Try again later or update ani-cli."
     if "No results found" in text:
         return "No results found."
+    match = re.search(r"No sources found for (sub|dub)", text)
+    if match:
+        return (f"This episode has no {match.group(1)} version yet. "
+                f"Pick {'sub' if match.group(1) == 'dub' else 'dub'} on the show page, or try again later.")
     for line in reversed(text.splitlines()):
         line = line.strip()
         if line and not line.startswith("Checking dependencies"):
@@ -77,7 +81,7 @@ def parse_capture(text: str) -> dict[str, list[str]]:
 
 
 async def _run_capture(args: list[str], timeout: int = SEARCH_TIMEOUT) -> tuple[dict[str, list[str]], str]:
-    with tempfile.NamedTemporaryFile("r", prefix="anidl-capture-", delete=True) as capture:
+    with tempfile.NamedTemporaryFile("r", prefix="anistash-capture-", delete=True) as capture:
         proc = await asyncio.create_subprocess_exec(
             config.ANI_CLI, *args,
             stdin=asyncio.subprocess.DEVNULL,

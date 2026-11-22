@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# Updates anidl inside its LXC to the newest GitHub release.
+# Updates anistash inside its LXC to the newest GitHub release.
 #
-#   anidl-update              update to the newest release (asks first)
-#   anidl-update -y           same, without asking
-#   anidl-update --check      only report whether an update exists
-#   anidl-update --version v0.2.0   install a specific release (also for downgrades)
-#   anidl-update --branch main      follow a branch instead of releases (bleeding edge)
+#   anistash-update              update to the newest release (asks first)
+#   anistash-update -y           same, without asking
+#   anistash-update --check      only report whether an update exists
+#   anistash-update --version v0.2.0   install a specific release (also for downgrades)
+#   anistash-update --branch main      follow a branch instead of releases (bleeding edge)
 #
 # Your settings, locations, queue and downloads are kept. If the new version fails
 # to install, the previous one is put back.
 set -euo pipefail
 
-APP=/opt/anidl
-if [[ -f /etc/anidl/anidl.env ]]; then
+APP=/opt/anistash
+if [[ -f /etc/anistash/anistash.env ]]; then
     set -a
     # shellcheck disable=SC1091
-    . /etc/anidl/anidl.env
+    . /etc/anistash/anistash.env
     set +a
 fi
-REPO="${ANIDL_REPO:-JustinMarxGit/anidl}"
-PORT="${ANIDL_PORT:-8000}"
+REPO="${ANISTASH_REPO:-JustinMarxGit/anistash}"
+PORT="${ANISTASH_PORT:-8000}"
 
 GN=$'\e[32m' YW=$'\e[33m' RD=$'\e[31m' BL=$'\e[36m' CL=$'\e[0m'
 ok() { echo -e " ${GN}✓${CL} $*"; }
@@ -42,8 +42,8 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-[[ $EUID -eq 0 ]] || die "Run anidl-update as root (it reinstalls system files)."
-[[ -d $APP/.git ]] || die "$APP is not a git checkout. Was anidl installed with install.sh?"
+[[ $EUID -eq 0 ]] || die "Run anistash-update as root (it reinstalls system files)."
+[[ -d $APP/.git ]] || die "$APP is not a git checkout. Was anistash installed with install.sh?"
 
 current="v$(cat "$APP/VERSION")"
 current_ref="$(git -C "$APP" describe --tags --always 2>/dev/null || echo unknown)"
@@ -63,7 +63,7 @@ else
 fi
 
 if [[ -z $branch && $want == "$current" ]]; then
-    ok "anidl $current is the newest release."
+    ok "anistash $current is the newest release."
     exit 0
 fi
 if [[ $check_only -eq 1 ]]; then
@@ -71,12 +71,12 @@ if [[ $check_only -eq 1 ]]; then
         echo "Installed: $current_ref. Branch $branch would be pulled."
     else
         echo "Update available: $current → $want"
-        echo "Run: anidl-update"
+        echo "Run: anistash-update"
     fi
     exit 10
 fi
 
-echo "anidl: $current ($current_ref) → $want"
+echo "AniStash: $current ($current_ref) → $want"
 if [[ $assume_yes -eq 0 && -t 0 ]]; then
     read -r -p "Update now? Downloads in progress will restart. [Y/n] " answer
     [[ ${answer:-y} =~ ^[Yy] ]] || exit 0
@@ -87,8 +87,8 @@ rollback() {
     warn "Update failed, going back to $current_ref"
     git -C "$APP" checkout --quiet --force "$previous"
     bash "$APP/install/deploy.sh" || true
-    systemctl restart anidl.service || true
-    die "anidl is back on $current_ref. Nothing else was changed."
+    systemctl restart anistash.service || true
+    die "anistash is back on $current_ref. Nothing else was changed."
 }
 
 info "Downloading $want"
@@ -105,14 +105,14 @@ ok "Fetched $(git -C "$APP" describe --tags --always)"
 trap rollback ERR
 info "Installing"
 bash "$APP/install/deploy.sh"
-systemctl restart anidl.service
+systemctl restart anistash.service
 for _ in $(seq 1 30); do
     curl -fs "http://127.0.0.1:$PORT/api/status" >/dev/null && break
     sleep 1
 done
 curl -fs "http://127.0.0.1:$PORT/api/status" >/dev/null || false  # not up after 30s: roll back
 trap - ERR
-ok "anidl is now on v$(cat "$APP/VERSION") ($(git -C "$APP" describe --tags --always))"
+ok "anistash is now on v$(cat "$APP/VERSION") ($(git -C "$APP" describe --tags --always))"
 
 info "Updating ani-cli and yt-dlp"
-"/usr/local/lib/anidl/anidl-helper" update-tools >/dev/null && ok "Tools updated" || warn "Tool update failed (anidl still works; try again later)"
+"/usr/local/lib/anistash/anistash-helper" update-tools >/dev/null && ok "Tools updated" || warn "Tool update failed (anistash still works; try again later)"

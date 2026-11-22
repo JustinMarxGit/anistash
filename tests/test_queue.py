@@ -353,9 +353,9 @@ def _helper_module():
     import importlib.machinery
     import importlib.util
     from pathlib import Path
-    path = str(Path(__file__).parent.parent / "helper" / "anidl-helper")
-    loader = importlib.machinery.SourceFileLoader("anidl_helper", path)
-    module = importlib.util.module_from_spec(importlib.util.spec_from_loader("anidl_helper", loader))
+    path = str(Path(__file__).parent.parent / "helper" / "anistash-helper")
+    loader = importlib.machinery.SourceFileLoader("anistash_helper", path)
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader("anistash_helper", loader))
     loader.exec_module(module)
     return module
 

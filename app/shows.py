@@ -12,7 +12,7 @@ import logging
 from . import anicli, anilist
 from .naming import base_title, normalize, number_seasons
 
-log = logging.getLogger("anidl.shows")
+log = logging.getLogger("anistash.shows")
 
 
 async def seasons(query: str, index: int, title: str, dub: bool) -> dict:

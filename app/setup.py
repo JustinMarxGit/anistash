@@ -1,4 +1,4 @@
-"""Post-install setup, shared by the web wizard and the `anidl-setup` console tool.
+"""Post-install setup, shared by the web wizard and the `anistash-setup` console tool.
 
 The installer leaves the app unconfigured. Until `setup_complete` is set, the API
 only answers setup-related routes. The same functions back both front ends, so
@@ -14,7 +14,7 @@ import time
 
 import httpx
 
-from . import anicli, auth, config, db, mediaserver, locations
+from . import anicli, auth, config, db, locations, mediaserver, vault
 
 STEPS = ["welcome", "admin", "locations", "mediaserver", "defaults", "finish"]
 QUALITIES = ["best", "1080", "720", "480", "360", "worst"]
@@ -132,7 +132,7 @@ def save_media_server(kind: str, url: str, token: str | None, library_id: str | 
         db.set_settings(media_library_id="", media_library_name="")
     values = {"media_server": kind, "media_url": url}
     if token is not None:
-        values["media_token"] = token.strip()
+        values["media_token"] = vault.encrypt(token.strip())
     if library_id is not None:
         values["media_library_id"] = library_id.strip()
         values["media_library_name"] = library_name.strip()
@@ -186,7 +186,7 @@ def _print(data) -> None:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m app.setup", description="anidl setup (used by anidl-setup)")
+    parser = argparse.ArgumentParser(prog="python -m app.setup", description="anistash setup (used by anistash-setup)")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status")
     sub.add_parser("check")
@@ -194,6 +194,7 @@ def main(argv=None) -> int:
     p.add_argument("--username", required=True)
     p = sub.add_parser("reset-password", help="password is read from stdin")
     p.add_argument("--username")
+    sub.add_parser("list-users")
     sub.add_parser("add-location", help="JSON on stdin, same fields as the web form")
     sub.add_parser("list-locations")
     p = sub.add_parser("list-shares", help="password is read from stdin")
@@ -210,7 +211,7 @@ def main(argv=None) -> int:
     p.add_argument("--url", default="")
     sub.add_parser("test-media-server")
     sub.add_parser("media-libraries")
-    p = sub.add_parser("media-library", help="the only library anidl will ask the media server to scan")
+    p = sub.add_parser("media-library", help="the only library anistash will ask the media server to scan")
     p.add_argument("library", help="library name or id")
     sub.add_parser("set-defaults", help="JSON on stdin")
     sub.add_parser("complete")
@@ -226,15 +227,25 @@ def main(argv=None) -> int:
             _print(asyncio.run(system_check()))
         elif args.cmd == "set-admin":
             auth.set_admin(args.username, _read_secret("Password: "))
+            auth.audit("console", "admin_set", args.username)
             save_step(max(state()["step"], 2))
             _print(f"Admin account '{args.username}' saved.")
         elif args.cmd == "reset-password":
-            row = db.query_one("SELECT username FROM users ORDER BY id LIMIT 1")
-            username = args.username or (row["username"] if row else None)
-            if not username:
-                raise SetupError("No admin account yet. Use set-admin.")
-            auth.set_admin(username, _read_secret("New password: "))
-            _print(f"Password for '{username}' changed. All sessions were signed out.")
+            # Without --username: the first admin, for when you're locked out of the web UI
+            row = db.query_one("SELECT id, username FROM users WHERE username = ?", (args.username,)) if args.username \
+                else db.query_one("SELECT id, username FROM users WHERE role = 'admin' ORDER BY id LIMIT 1")
+            if not row:
+                raise SetupError("No such user. Use list-users to see them, or set-admin to create an admin.")
+            auth.set_password(row["id"], _read_secret("New password: "))
+            # Also lift any lockout and re-enable the account
+            db.execute("UPDATE users SET disabled = 0 WHERE id = ?", (row["id"],))
+            db.execute("DELETE FROM login_attempts WHERE key = ?", (f"user:{row['username'].lower()}",))
+            auth.audit("console", "password_reset", row["username"])
+            _print(f"Password for '{row['username']}' changed and the account unlocked. All its sessions were signed out.")
+        elif args.cmd == "list-users":
+            for u in auth.list_users():
+                flags = " (disabled)" if u["disabled"] else ""
+                print(f"{u['username']}\t{u['role']}{flags}")
         elif args.cmd == "add-location":
             loc = asyncio.run(locations.create(json.load(sys.stdin)))
             _print(f"Added location {loc['id']}: {loc['name']} → {loc['path']}")
@@ -280,7 +291,7 @@ def main(argv=None) -> int:
             if not match:
                 raise SetupError("No library with that name or id. See media-libraries.")
             db.set_settings(media_library_id=match[0]["id"], media_library_name=match[0]["name"])
-            _print(f"anidl will only scan the '{match[0]['name']}' library.")
+            _print(f"anistash will only scan the '{match[0]['name']}' library.")
         elif args.cmd == "set-defaults":
             _print(save_defaults(json.load(sys.stdin)))
         elif args.cmd == "complete":
@@ -288,7 +299,7 @@ def main(argv=None) -> int:
             _print("Setup complete.")
         elif args.cmd == "reset":
             reset()
-            _print("Configuration wiped. Open the web UI or run anidl-setup to set up again.")
+            _print("Configuration wiped. Open the web UI or run anistash-setup to set up again.")
     except (SetupError, locations.LocationError, mediaserver.MediaServerError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

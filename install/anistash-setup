@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# Console setup for anidl. It runs the same steps as the web wizard (it calls the
+# Console setup for anistash. It runs the same steps as the web wizard (it calls the
 # same Python code), for when the web UI isn't reachable or you prefer a terminal.
 #
-#   anidl-setup                    menu
-#   anidl-setup --reset-password   set a new admin password (locked out of the web UI)
-#   anidl-setup --reset            forget all configuration (downloads are kept)
+#   anistash-setup                    menu
+#   anistash-setup --reset-password   new password for a user (e.g. when locked out of the web UI)
+#   anistash-setup --reset            forget all configuration (downloads are kept)
 set -uo pipefail
 
-APP=/opt/anidl
-TITLE="anidl setup"
+APP=/opt/anistash
+TITLE="AniStash setup"
 export NEWT_COLORS='root=,black window=,black border=white,black textbox=white,black button=black,white'
 
-[[ $EUID -eq 0 ]] || { echo "Run anidl-setup as root." >&2; exit 1; }
+[[ $EUID -eq 0 ]] || { echo "Run anistash-setup as root." >&2; exit 1; }
 command -v whiptail >/dev/null || { echo "whiptail is missing: apt install whiptail" >&2; exit 1; }
 
-# Run the setup CLI as the app user, so files it creates stay owned by anidl
+# Run the setup CLI as the app user, so files it creates stay owned by anistash
 cli() {
-    (cd "$APP" && runuser -u anidl -- env ANIDL_DATA_DIR=/var/lib/anidl "$APP/venv/bin/python" -m app.setup "$@")
+    (cd "$APP" && runuser -u anistash -- env ANISTASH_DATA_DIR=/var/lib/anistash "$APP/venv/bin/python" -m app.setup "$@")
 }
 
 # Builds a JSON object from key value pairs without any shell quoting surprises
@@ -40,7 +40,7 @@ admin_account() {
     local user pw pw2
     user="$(input "Admin username:" "admin")" || return 1
     while :; do
-        pw="$(secret "Password for $user (8+ characters):")" || return 1
+        pw="$(secret "Password for $user (10+ characters):")" || return 1
         pw2="$(secret "Repeat the password:")" || return 1
         [[ $pw == "$pw2" ]] && break
         msg "The passwords don't match. Try again."
@@ -49,14 +49,19 @@ admin_account() {
 }
 
 reset_password() {
-    local pw pw2
+    local rows=() name rest pw pw2
+    while IFS=$'\t' read -r name rest; do
+        [[ -n $name ]] && rows+=("$name" "$rest")
+    done < <(cli list-users 2>/dev/null)
+    [[ ${#rows[@]} -gt 0 ]] || { msg "There are no users yet. Run the full setup first."; return 1; }
+    name="$(whiptail --title "$TITLE" --menu "Reset whose password? (also unlocks and re-enables the account)" 18 70 8 "${rows[@]}" 3>&1 1>&2 2>&3)" || return 1
     while :; do
-        pw="$(secret "New admin password (8+ characters):")" || return 1
+        pw="$(secret "New password for $name (10+ characters):")" || return 1
         pw2="$(secret "Repeat the password:")" || return 1
         [[ $pw == "$pw2" ]] && break
         msg "The passwords don't match. Try again."
     done
-    printf '%s\n' "$pw" | show reset-password
+    printf '%s\n' "$pw" | show reset-password --username "$name"
 }
 
 add_location() {
@@ -135,7 +140,7 @@ locations_menu() {
 
 media_server() {
     local kind url token rows=() id rest lib
-    kind="$(whiptail --title "$TITLE" --menu "Which media server should anidl tell about new downloads?" 14 72 3 \
+    kind="$(whiptail --title "$TITLE" --menu "Which media server should AniStash tell about new downloads?" 14 72 3 \
         jellyfin "Jellyfin" plex "Plex" none "None" 3>&1 1>&2 2>&3)" || return 1
     if [[ $kind == none ]]; then
         printf '\n' | show set-media-server --kind none
@@ -154,7 +159,7 @@ media_server() {
         [[ -n $id ]] && rows+=("$id" "$rest")
     done < <(cli media-libraries 2>/dev/null)
     [[ ${#rows[@]} -gt 0 ]] || { msg "No libraries found on the server."; return 1; }
-    lib="$(whiptail --title "$TITLE" --menu "Your anime library. anidl only ever scans this one:" 18 100 8 "${rows[@]}" 3>&1 1>&2 2>&3)" || return 1
+    lib="$(whiptail --title "$TITLE" --menu "Your anime library. AniStash only ever scans this one:" 18 100 8 "${rows[@]}" 3>&1 1>&2 2>&3)" || return 1
     show media-library "$lib"
 }
 
@@ -183,13 +188,13 @@ full_setup() {
     while yesno "Add another download location?"; do add_location; done
     if yesno "Connect Jellyfin or Plex so new downloads show up right away?"; then media_server; fi
     defaults || return
-    show complete && msg "Setup complete. Open http://$(hostname -I | awk '{print $1}'):$(sed -n 's/^ANIDL_PORT=//p' /etc/anidl/anidl.env) and log in."
+    show complete && msg "Setup complete. Open http://$(hostname -I | awk '{print $1}'):$(sed -n 's/^ANISTASH_PORT=//p' /etc/anistash/anistash.env) and log in."
 }
 
 case "${1:-}" in
     --reset-password) reset_password; exit ;;
     --reset)
-        yesno "Forget ALL anidl configuration (account, locations, media server, queue)?\n\nDownloaded files are kept." &&
+        yesno "Forget ALL anistash configuration (account, locations, media server, queue)?\n\nDownloaded files are kept." &&
             show reset --yes
         exit ;;
     -h | --help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -201,7 +206,7 @@ while :; do
     choice="$(whiptail --title "$TITLE" --menu "$(cli status 2>/dev/null | python3 -c 'import json,sys; s=json.load(sys.stdin); print("Setup complete" if s["setup_complete"] else "Setup NOT finished", "·", s["location_count"], "location(s) · v" + s["version"])' 2>/dev/null)" 19 72 9 \
         setup "Run the full setup" \
         admin "Create admin account / change login" \
-        password "Reset the admin password" \
+        password "Reset a user's password / unlock" \
         locations "Download locations" \
         media "Media server (Jellyfin / Plex)" \
         defaults "Download defaults" \

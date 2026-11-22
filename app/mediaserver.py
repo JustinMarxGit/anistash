@@ -1,6 +1,6 @@
 """Jellyfin and Plex: connection test, library list, targeted scans and series lookup.
 
-anidl never asks the media server to scan everything. In order of preference it:
+anistash never asks the media server to scan everything. In order of preference it:
   1. scans just the new season folders, when the location has a "media server sees
      this as" path (Jellyfin: POST /Library/Media/Updated, Plex: refresh?path=...);
   2. otherwise refreshes only the chosen anime library;
@@ -14,11 +14,11 @@ import logging
 
 import httpx
 
-from . import db
+from . import db, vault
 
 DEBOUNCE = 30
 KINDS = ("none", "jellyfin", "plex")
-log = logging.getLogger("anidl.mediaserver")
+log = logging.getLogger("anistash.mediaserver")
 
 _pending: set[str] = set()
 _pending_batches: set[int] = set()
@@ -44,14 +44,14 @@ async def _request(method: str, path: str, *, kind: str | None = None, url: str 
     s = db.get_settings()
     kind = kind or s["media_server"]
     url = (url or s["media_url"]).rstrip("/")
-    token = token or s["media_token"]
+    token = token or vault.decrypt(s["media_token"])
     if kind not in ("jellyfin", "plex") or not url or not token:
         raise MediaServerError("No media server is set up.")
     if kind == "jellyfin":
         headers = {"Authorization": f'MediaBrowser Token="{token}"', "Accept": "application/json"}
     else:
         headers = {"X-Plex-Token": token, "Accept": "application/json",
-                   "X-Plex-Product": "anidl", "X-Plex-Client-Identifier": "anidl"}
+                   "X-Plex-Product": "anistash", "X-Plex-Client-Identifier": "anistash"}
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.request(method, url + path, headers=headers, **kwargs)

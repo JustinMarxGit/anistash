@@ -1,4 +1,4 @@
-/* anidl: phone-first layout. Bottom tab bar under 768px, top nav above. */
+/* anistash: phone-first layout. Bottom tab bar under 768px, top nav above. */
 
 :root {
   --bg: #f6f7f9;
@@ -296,3 +296,8 @@ code { font-family: ui-monospace, monospace; font-size: .85em; }
 .crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: .1rem; margin-top: .5rem; color: var(--muted); }
 .crumbs button { padding: 0 .4rem; }
 @media (max-width: 600px) { .loc { grid-template-columns: 1fr; } }
+
+.audit { display: grid; gap: .35rem; font-size: .85rem; max-height: 420px; overflow: auto; }
+.audit > div { padding: .45rem .6rem; border-radius: 8px; background: var(--surface-2); word-break: break-word; }
+.audit > div.bad { background: var(--bad-soft); }
+select.small { min-height: 36px; padding: 0 .5rem; font-size: .88rem; }

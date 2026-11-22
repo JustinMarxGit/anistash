@@ -6,5 +6,5 @@ for last; do :; done
     printf '### %s\n' "$last"
     cat -
     printf '\n'
-} >>"${ANIDL_CAPTURE:?ANIDL_CAPTURE not set}"
+} >>"${ANISTASH_CAPTURE:?ANISTASH_CAPTURE not set}"
 exit 1

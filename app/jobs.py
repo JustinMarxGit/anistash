@@ -16,7 +16,7 @@ import time
 from . import anicli, config, db, locations, mediaserver, postprocess
 from .naming import episode_path
 
-log = logging.getLogger("anidl.jobs")
+log = logging.getLogger("anistash.jobs")
 
 ACTIVE = ("queued", "running")
 _running: dict[int, asyncio.subprocess.Process | None] = {}
@@ -46,7 +46,8 @@ def existing_episodes(location_id: int | None, series: str, season: int, title: 
             if os.path.exists(str(episode_path(row["path"], series, season, e, title, naming, offset)) + ".mp4")}
 
 
-def enqueue(series_name: str, location_id: int, mode: str, quality: str, entries: list[dict]) -> dict:
+def enqueue(series_name: str, location_id: int, mode: str, quality: str, entries: list[dict],
+            created_by: int | None = None) -> dict:
     """Queues seasons. Each entry: {query, index, title, season, offset, episodes: [...]}.
 
     Episodes that are already queued, or already downloaded when skip_existing is on,
@@ -83,9 +84,9 @@ def enqueue(series_name: str, location_id: int, mode: str, quality: str, entries
             position = conn.execute("SELECT COALESCE(MAX(position), 0) + 1 FROM batches").fetchone()[0]
             batch_id = conn.execute(
                 "INSERT INTO batches (series_name, season, episode_offset, query, result_index, title, mode, quality, "
-                "location_id, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "location_id, position, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (series_name, season, offset, entry["query"], int(entry["index"]), entry["title"], mode, quality or "best",
-                 location_id, position, now()),
+                 location_id, position, created_by, now()),
             ).lastrowid
             for i, episode in enumerate(todo):
                 conn.execute(
@@ -99,8 +100,9 @@ def enqueue(series_name: str, location_id: int, mode: str, quality: str, entries
 
 
 def snapshot() -> list[dict]:
-    batches = db.query("SELECT batches.*, locations.name AS location_name FROM batches "
-                       "LEFT JOIN locations ON locations.id = batches.location_id ORDER BY position")
+    batches = db.query("SELECT batches.*, locations.name AS location_name, users.username AS owner FROM batches "
+                       "LEFT JOIN locations ON locations.id = batches.location_id "
+                       "LEFT JOIN users ON users.id = batches.created_by ORDER BY position")
     items = db.query("SELECT id, batch_id, episode, status, progress, detail, error, dest, quality "
                      "FROM items ORDER BY position, id")
     by_batch: dict[int, list] = {}
@@ -114,7 +116,8 @@ def snapshot() -> list[dict]:
             "id": b["id"], "series_name": b["series_name"], "season": b["season"], "offset": b["episode_offset"],
             "title": b["title"],
             "mode": b["mode"], "quality": b["quality"], "location": b["location_name"], "warning": b["warning"],
-            "created_at": b["created_at"], "items": its, "counts": counts,
+            "created_at": b["created_at"], "created_by": b["created_by"], "owner": b["owner"] or "",
+            "items": its, "counts": counts,
             "active": counts["queued"] + counts["running"] > 0,
         })
     return result
@@ -173,11 +176,12 @@ def move(table: str, row_id: int, direction: str) -> None:
         conn.execute(f"UPDATE {table} SET position = ? WHERE id = ?", (a, other["id"]))
 
 
-def clear_finished() -> int:
+def clear_finished(user_id: int | None = None) -> int:
+    """Removes finished batches: everyone's (user_id None) or only that user's."""
     with db.tx() as conn:
         done = [r[0] for r in conn.execute(
             "SELECT id FROM batches WHERE NOT EXISTS (SELECT 1 FROM items WHERE items.batch_id = batches.id "
-            "AND items.status IN ('queued', 'running'))")]
+            "AND items.status IN ('queued', 'running')) AND (? IS NULL OR created_by = ?)", (user_id, user_id))]
         conn.executemany("DELETE FROM items WHERE batch_id = ?", [(i,) for i in done])
         conn.executemany("DELETE FROM batches WHERE id = ?", [(i,) for i in done])
     return len(done)

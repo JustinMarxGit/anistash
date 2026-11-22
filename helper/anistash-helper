@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Root-only helper for anidl. The web app runs as the unprivileged `anidl` user and
+"""Root-only helper for anistash. The web app runs as the unprivileged `anistash` user and
 may run this (and only this) through sudo. Every value is validated here, because
 this is the trust boundary: never pass anything from it to a shell.
 
-  anidl-helper mount           < {"id": 3, "type": "smb", ...}   write + start a systemd mount unit
-  anidl-helper unmount ID                                         stop and delete a location's mount
-  anidl-helper remount ID                                         restart a location's mount
-  anidl-helper prepare-local   < {"path": "/mnt/media/anime"}     create a local folder owned by anidl
-  anidl-helper update-tools                                       update ani-cli and yt-dlp
-  anidl-helper update-app                                         run anidl-update -y in the background
-  anidl-helper list-shares     < {"type": "smb", "server": ...}   list SMB shares / NFS exports (+ anime folders)
-  anidl-helper list-folders    < {"server", "share", "path": []}  list folders inside an SMB share
+  anistash-helper mount           < {"id": 3, "type": "smb", ...}   write + start a systemd mount unit
+  anistash-helper unmount ID                                         stop and delete a location's mount
+  anistash-helper remount ID                                         restart a location's mount
+  anistash-helper prepare-local   < {"path": "/mnt/media/anime"}     create a local folder owned by anistash
+  anistash-helper update-tools                                       update ani-cli and yt-dlp
+  anistash-helper update-app                                         run anistash-update -y in the background
+  anistash-helper list-shares     < {"type": "smb", "server": ...}   list SMB shares / NFS exports (+ anime folders)
+  anistash-helper list-folders    < {"server", "share", "path": []}  list folders inside an SMB share
 
 Prints one JSON object: {"ok": true, ...} or {"ok": false, "error": "..."}.
 """
@@ -24,10 +24,10 @@ import subprocess
 import sys
 import tempfile
 
-MOUNT_ROOT = "/mnt/anidl"
-CREDS_DIR = "/etc/anidl/creds"
+MOUNT_ROOT = "/mnt/anistash"
+CREDS_DIR = "/etc/anistash/creds"
 UNIT_DIR = "/etc/systemd/system"
-APP_USER = "anidl"
+APP_USER = "anistash"
 LOCAL_PATH_PREFIXES = ("/mnt/", "/media/", "/srv/", "/data/", "/downloads/", "/storage/", "/home/")
 
 SERVER = re.compile(r"^[A-Za-z0-9.\-]{1,253}$|^\[?[0-9A-Fa-f:]{2,45}\]?$")
@@ -82,7 +82,7 @@ def location_id(value):
 
 
 def unit_name(loc_id):
-    return f"mnt-anidl-loc{loc_id}.mount"
+    return f"mnt-anistash-loc{loc_id}.mount"
 
 
 def run(*args, timeout=60):
@@ -103,7 +103,7 @@ def mount(spec):
     if kind == "smb":
         server = check(SERVER, spec.get("server", ""), "Server")
         share = check_share(spec.get("share", ""))
-        # Only the share is mounted; anidl creates and uses folders inside it itself
+        # Only the share is mounted; anistash creates and uses folders inside it itself
         what = f"//{server}/{share}"
         vers = spec.get("vers", "")
         if vers not in SMB_VERSIONS:
@@ -145,7 +145,7 @@ def mount(spec):
 
     os.makedirs(where, exist_ok=True)
     unit = f"""[Unit]
-Description=anidl download location {loc_id}
+Description=anistash download location {loc_id}
 After=network-online.target
 Wants=network-online.target
 
@@ -244,7 +244,7 @@ def _smb_error(text):
 def _smbclient(spec, *args, timeout=30):
     """Runs smbclient with the spec's credentials kept in a root-only temp file."""
     if not shutil.which("smbclient"):
-        fail("smbclient isn't installed. Run anidl-update (or: apt install smbclient).")
+        fail("smbclient isn't installed. Run anistash-update (or: apt install smbclient).")
     username = check(USERNAME, spec.get("username", ""), "Username")
     domain = check(DOMAIN, spec.get("domain", ""), "Domain")
     password = spec.get("password", "")
@@ -254,7 +254,7 @@ def _smbclient(spec, *args, timeout=30):
     auth = ["-N"]
     if username:
         # Credentials go in a root-only file, never on the command line
-        fd, authfile = tempfile.mkstemp(prefix="anidl-auth-")
+        fd, authfile = tempfile.mkstemp(prefix="anistash-auth-")
         with os.fdopen(fd, "w") as f:
             f.write(f"username={username}\npassword={password}\n" + (f"domain={domain}\n" if domain else ""))
         auth = ["-A", authfile]
@@ -368,9 +368,9 @@ def list_folders(spec):
 
 
 def update_app():
-    # Runs outside the anidl service, because the update restarts it
-    result = run("systemd-run", "--unit=anidl-self-update", "--collect", "--quiet",
-                 "/usr/local/bin/anidl-update", "--yes")
+    # Runs outside the anistash service, because the update restarts it
+    result = run("systemd-run", "--unit=anistash-self-update", "--collect", "--quiet",
+                 "/usr/local/bin/anistash-update", "--yes")
     if result.returncode != 0:
         fail(result.stderr.strip() or "Couldn't start the update")
     done()
@@ -378,7 +378,7 @@ def update_app():
 
 def main():
     if os.geteuid() != 0:
-        fail("anidl-helper must run as root")
+        fail("anistash-helper must run as root")
     if len(sys.argv) < 2:
         fail("No command given")
     command, args = sys.argv[1], sys.argv[2:]

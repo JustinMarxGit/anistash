@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# Installs anidl inside a Debian LXC (12 or newer). ct/anidl.sh on the Proxmox host
+# Installs anistash inside a Debian LXC (12 or newer). ct/anistash.sh on the Proxmox host
 # runs this for you; to run it by hand inside a fresh privileged Debian container:
 #
-#   curl -fsSL https://raw.githubusercontent.com/JustinMarxGit/anidl/main/install/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/JustinMarxGit/anistash/main/install/install.sh | bash
 #
 # Only the container is set up here. The app starts unconfigured: open the web UI
-# (or run anidl-setup) to create the admin account and add download locations.
+# (or run anistash-setup) to create the admin account and add download locations.
 #
-# Environment: ANIDL_PORT (8000), ANIDL_REPO (JustinMarxGit/anidl), ANIDL_REF (newest release),
-#              TZ (keep current), ANIDL_VERBOSE (0)
+# Environment: ANISTASH_PORT (8000), ANISTASH_REPO (JustinMarxGit/anistash), ANISTASH_REF (newest release),
+#              TZ (keep current), ANISTASH_VERBOSE (0)
 set -euo pipefail
 
-PORT="${ANIDL_PORT:-8000}"
-REPO="${ANIDL_REPO:-JustinMarxGit/anidl}"
-REF="${ANIDL_REF:-}"
-APP=/opt/anidl
-VERBOSE="${ANIDL_VERBOSE:-0}"
-LOG=/var/log/anidl-install.log
+PORT="${ANISTASH_PORT:-8000}"
+REPO="${ANISTASH_REPO:-JustinMarxGit/anistash}"
+REF="${ANISTASH_REF:-}"
+APP=/opt/anistash
+VERBOSE="${ANISTASH_VERBOSE:-0}"
+LOG=/var/log/anistash-install.log
 
 GN=$'\e[32m' RD=$'\e[31m' BL=$'\e[36m' CL=$'\e[0m'
 step=""
@@ -27,8 +27,8 @@ trap fail ERR
 quiet() { if [[ $VERBOSE == 1 ]]; then "$@"; else "$@" >>"$LOG" 2>&1; fi; }
 
 [[ $EUID -eq 0 ]] || { echo "Run as root." >&2; exit 1; }
-[[ -f /etc/debian_version ]] || { echo "anidl's installer supports Debian only." >&2; exit 1; }
-[[ $PORT =~ ^[0-9]+$ ]] && ((PORT > 0 && PORT < 65536)) || { echo "ANIDL_PORT must be a port number." >&2; exit 1; }
+[[ -f /etc/debian_version ]] || { echo "AniStash's installer supports Debian only." >&2; exit 1; }
+[[ $PORT =~ ^[0-9]+$ ]] && ((PORT > 0 && PORT < 65536)) || { echo "ANISTASH_PORT must be a port number." >&2; exit 1; }
 : >"$LOG"
 
 # Same fixes the community scripts apply: Debian 13 templates can leave / owned by
@@ -62,14 +62,14 @@ quiet curl -fsSL -o /usr/local/bin/ani-cli https://raw.githubusercontent.com/pys
 chmod 0755 /usr/local/bin/ani-cli
 ok "ani-cli $(/usr/local/bin/ani-cli -V 2>/dev/null | tail -n1)"
 
-info "Creating the anidl user and folders"
-id anidl &>/dev/null || useradd --system --home-dir /var/lib/anidl --shell /usr/sbin/nologin anidl
-install -d -m 0750 -o anidl -g anidl /var/lib/anidl
-install -d -m 0755 -o root -g root /etc/anidl /mnt/anidl
-install -d -m 0700 -o root -g root /etc/anidl/creds
+info "Creating the AniStash user and folders"
+id anistash &>/dev/null || useradd --system --home-dir /var/lib/anistash --shell /usr/sbin/nologin anistash
+install -d -m 0750 -o anistash -g anistash /var/lib/anistash
+install -d -m 0755 -o root -g root /etc/anistash /mnt/anistash
+install -d -m 0700 -o root -g root /etc/anistash/creds
 ok "User and folders"
 
-info "Downloading anidl"
+info "Downloading AniStash"
 if [[ -z $REF ]]; then
     REF="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" |
         python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name",""))' 2>/dev/null || true)"
@@ -83,26 +83,26 @@ else
 fi
 quiet git -C "$APP" checkout --force "$REF"
 chown -R root:root "$APP"
-ok "anidl $(cat "$APP/VERSION") ($REF)"
+ok "AniStash $(cat "$APP/VERSION") ($REF)"
 
 info "Writing settings"
-cat >/etc/anidl/anidl.env <<EOF
-# anidl service settings. Change the port here, then: systemctl restart anidl
-ANIDL_PORT=$PORT
-ANIDL_DATA_DIR=/var/lib/anidl
-ANIDL_REPO=$REPO
+cat >/etc/anistash/anistash.env <<EOF
+# anistash service settings. Change the port here, then: systemctl restart anistash
+ANISTASH_PORT=$PORT
+ANISTASH_DATA_DIR=/var/lib/anistash
+ANISTASH_REPO=$REPO
 EOF
-ok "/etc/anidl/anidl.env"
+ok "/etc/anistash/anistash.env"
 
 info "Installing the app and services"
 quiet bash "$APP/install/deploy.sh"
-quiet systemctl restart anidl.service
+quiet systemctl restart anistash.service
 for _ in $(seq 1 30); do curl -fs "http://127.0.0.1:$PORT/api/status" >/dev/null && break; sleep 1; done
 curl -fs "http://127.0.0.1:$PORT/api/status" >/dev/null
-ok "anidl is running"
+ok "AniStash is running"
 
 ip="$(hostname -I | awk '{print $1}')"
 echo
-echo -e " ${GN}anidl is installed.${CL} Open ${BL}http://${ip}:${PORT}${CL} to finish setup,"
-echo "   or run anidl-setup in this console."
-echo "   Update later with: anidl-update"
+echo -e " ${GN}AniStash is installed.${CL} Open ${BL}http://${ip}:${PORT}${CL} to finish setup,"
+echo "   or run anistash-setup in this console."
+echo "   Update later with: anistash-update"

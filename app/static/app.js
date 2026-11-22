@@ -1,8 +1,9 @@
-// anidl frontend: hash-routed single page app, no build step.
+// AniStash frontend: hash-routed single page app, no build step.
 
 const view = document.getElementById("view");
 const nav = document.getElementById("nav");
 let status = null;          // /api/status
+let prefs = null;           // /api/settings, for defaults like sub/dub
 let pollTimer = null;       // downloads page refresh
 let badgeTimer = null;      // queue badge refresh
 
@@ -17,9 +18,13 @@ class ApiError extends Error {
 }
 
 async function api(path, { method = "GET", body } = {}) {
+  // The custom header marks requests as coming from this app; the server rejects
+  // state-changing requests without it (cross-site forms and scripts can't add it)
+  const headers = { "X-Requested-With": "anistash" };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
   const resp = await fetch(path, {
     method,
-    headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+    headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
     credentials: "same-origin",
   });
@@ -27,6 +32,7 @@ async function api(path, { method = "GET", body } = {}) {
   try { data = await resp.json(); } catch { /* empty body */ }
   if (resp.status === 401 && !path.startsWith("/api/login")) { location.hash = "#/login"; throw new ApiError("Please log in.", 401); }
   if (resp.status === 409) { location.hash = "#/setup"; throw new ApiError("Finish setup first.", 409); }
+  if (resp.status === 403 && data?.detail === "password change required") { location.hash = "#/password"; throw new ApiError("Change your password first.", 403); }
   if (!resp.ok) {
     let detail = data?.detail;
     if (Array.isArray(detail)) detail = detail.map((d) => d.msg).join(", ");
@@ -107,6 +113,13 @@ function pumpMeta() {
   }
 }
 
+// Sub or dub for this page: the toggle in the URL wins, else the saved preference
+function wantDub() {
+  const p = params();
+  return "dub" in p ? p.dub === "1" : prefs?.mode === "dub";
+}
+const dubParam = (dub) => `&dub=${dub ? 1 : 0}`;
+
 // Router ----------------------------------------------------------------------
 
 const routes = {
@@ -117,6 +130,13 @@ const routes = {
   "settings": settingsView,
   "setup": setupView,
   "login": loginView,
+  "password": passwordView,
+};
+
+// What the signed-in user may do (the server enforces the same rules)
+const can = {
+  download: () => ["admin", "member"].includes(status?.user?.role),
+  admin: () => status?.user?.role === "admin",
 };
 
 async function route() {
@@ -127,21 +147,23 @@ async function route() {
   try {
     status = await api("/api/status");
   } catch (e) {
-    view.innerHTML = `<div class="error-box">Can't reach anidl: ${esc(e.message)}</div>`;
+    view.innerHTML = `<div class="error-box">Can't reach AniStash: ${esc(e.message)}</div>`;
     return;
   }
   // Fresh install or unfinished setup always lands in the wizard
   if (!status.has_admin && name !== "setup") return void (location.hash = "#/setup");
   if (status.has_admin && !status.logged_in && name !== "login") return void (location.hash = "#/login");
+  if (status.logged_in && status.user?.must_change_password && name !== "password") return void (location.hash = "#/password");
   if (status.logged_in && !status.setup_complete && name !== "setup") return void (location.hash = "#/setup");
 
-  const ready = status.logged_in && status.setup_complete;
+  const ready = status.logged_in && status.setup_complete && !status.user?.must_change_password;
   nav.hidden = !ready;
   document.body.style.paddingBottom = ready ? "" : "0";
   for (const a of $$("[data-nav]", nav)) {
     a.classList.toggle("active", a.dataset.nav === (name || "browse") || (name === "show" && a.dataset.nav === "search"));
   }
   if (ready && !badgeTimer) { refreshBadge(); badgeTimer = setInterval(refreshBadge, 10000); }
+  if (ready && !prefs) prefs = await api("/api/settings").catch(() => null);
   window.scrollTo(0, 0);
   (routes[name] || browseView)();
 }
@@ -165,12 +187,12 @@ function loginView() {
   view.innerHTML = `
     <form class="login card" id="login">
       <h1>Log in</h1>
-      <p class="muted">Sign in with the admin account you created during setup.</p>
+      <p class="muted">Sign in with your AniStash account.</p>
       <div id="err"></div>
       <label class="field"><span>Username</span><input type="text" name="username" autocomplete="username" autocapitalize="off" required></label>
       <label class="field"><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label>
       <button class="primary block" type="submit">Log in</button>
-      <p class="hint" style="margin-top:1rem">Locked out? Run <code>anidl-setup --reset-password</code> in the container's console.</p>
+      <p class="hint" style="margin-top:1rem">Locked out? Run <code>anistash-setup --reset-password</code> in the container's console.</p>
     </form>`;
   $("#login").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -181,6 +203,34 @@ function loginView() {
     } catch (err) {
       $("#err").innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
     }
+  });
+}
+
+// Forced password change ---------------------------------------------------------------
+
+function passwordView() {
+  view.innerHTML = `
+    <form class="login card" id="pwform">
+      <h1>Choose a new password</h1>
+      <p class="muted">${status?.user?.must_change_password ? "An admin set a temporary password for your account. Pick your own to continue." : "Change your password."}</p>
+      <div id="err"></div>
+      <label class="field"><span>Current (temporary) password</span><input type="password" name="current" autocomplete="current-password" required></label>
+      <label class="field"><span>New password</span><input type="password" name="new" autocomplete="new-password" minlength="10" required>
+        <div class="hint">At least 10 characters. A few random words is easy to remember and hard to guess.</div></label>
+      <label class="field"><span>Repeat new password</span><input type="password" name="new2" autocomplete="new-password" minlength="10" required></label>
+      <button class="primary block" type="submit">Save password</button>
+      <button class="ghost block" type="button" id="pw-logout" style="margin-top:.5rem">Log out</button>
+    </form>`;
+  $("#pw-logout").addEventListener("click", async () => { await api("/api/logout", { method: "POST" }); location.hash = "#/login"; });
+  $("#pwform").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const d = formData(e.target);
+    if (d.new !== d.new2) { $("#err").innerHTML = `<div class="error-box">The new passwords don't match.</div>`; return; }
+    try {
+      await busy(e.submitter, () => api("/api/account/password", { method: "POST", body: { current: d.current, new: d.new } }));
+      toast("Password changed");
+      location.hash = "#/";
+    } catch (err) { $("#err").innerHTML = `<div class="error-box">${esc(err.message)}</div>`; }
   });
 }
 
@@ -215,7 +265,7 @@ async function browseView() {
 
 async function searchView() {
   const q = params().q || "";
-  const dub = params().dub === "1";
+  const dub = wantDub();
   view.innerHTML = `
     <form class="searchbar" id="search">
       <input type="search" name="q" value="${esc(q)}" placeholder="Search anime…" enterkeyhint="search" aria-label="Search anime" ${q ? "" : "autofocus"}>
@@ -226,16 +276,16 @@ async function searchView() {
         <button type="button" data-dub="0" class="${dub ? "" : "on"}">Sub</button>
         <button type="button" data-dub="1" class="${dub ? "on" : ""}">Dub</button>
       </div>
-      <span class="muted small grow">Tick several results to queue them together, e.g. every season.</span>
+      <span class="muted small grow">${can.download() ? "Tick several results to queue them together, e.g. every season." : ""}</span>
     </div>
     <div id="results">${q ? loading("Searching…") : ""}</div>`;
   $("#search").addEventListener("submit", (e) => {
     e.preventDefault();
     const value = e.target.q.value.trim();
-    if (value) location.hash = `#/search?q=${encodeURIComponent(value)}${dub ? "&dub=1" : ""}`;
+    if (value) location.hash = `#/search?q=${encodeURIComponent(value)}${dubParam(dub)}`;
   });
   for (const b of $$("[data-dub]")) {
-    b.addEventListener("click", () => { location.hash = `#/search?q=${encodeURIComponent(q)}${b.dataset.dub === "1" ? "&dub=1" : ""}`; });
+    b.addEventListener("click", () => { location.hash = `#/search?q=${encodeURIComponent(q)}${dubParam(b.dataset.dub === "1")}`; });
   }
   if (!q) return;
 
@@ -252,11 +302,11 @@ async function searchView() {
   $("#results").innerHTML = `<div class="results">${results.map((r) => `
     <div class="result" data-index="${r.index}">
       <div class="thumb" data-title="${esc(r.title)}"></div>
-      <a class="body" href="#/show?q=${encodeURIComponent(q)}&i=${r.index}&t=${encodeURIComponent(r.title)}${dub ? "&dub=1" : ""}">
+      <a class="body" href="#/show?q=${encodeURIComponent(q)}&i=${r.index}&t=${encodeURIComponent(r.title)}${dubParam(dub)}">
         <span class="title">${esc(r.title)}</span>
         <span class="meta" data-meta>${r.title_known ? "" : "Only result"}</span>
       </a>
-      <label class="pick" aria-label="Select ${esc(r.title)}"><input type="checkbox" value="${r.index}"></label>
+      ${can.download() ? `<label class="pick" aria-label="Select ${esc(r.title)}"><input type="checkbox" value="${r.index}"></label>` : ""}
     </div>`).join("")}</div>`;
 
   for (const thumb of $$(".thumb[data-title]")) {
@@ -366,7 +416,7 @@ function qualitySelect(current) {
 
 async function showView() {
   const p = params();
-  const dub = p.dub === "1";
+  const dub = wantDub();
   view.innerHTML = loading("Loading seasons and episodes…");
   let data, locs, settings;
   try {
@@ -389,7 +439,7 @@ async function showView() {
   let locationId = locs.locations.find((l) => l.is_default)?.id;
 
   view.innerHTML = `
-    <a href="#/search?q=${encodeURIComponent(p.q)}${dub ? "&dub=1" : ""}" class="small">← Results</a>
+    <a href="#/search?q=${encodeURIComponent(p.q)}${dubParam(dub)}" class="small">← Results</a>
     <div class="hero" style="margin-top:.75rem">
       <div class="art" style="background-image:url('${esc(meta?.cover || "")}')"></div>
       <div>
@@ -421,7 +471,7 @@ async function showView() {
 
   $("#syn")?.addEventListener("click", (e) => e.target.classList.toggle("clamp"));
   for (const b of $$("[data-dub]")) {
-    b.addEventListener("click", () => { location.hash = `#/show?q=${encodeURIComponent(p.q)}&i=${p.i}&t=${encodeURIComponent(p.t)}${b.dataset.dub === "1" ? "&dub=1" : ""}`; });
+    b.addEventListener("click", () => { location.hash = `#/show?q=${encodeURIComponent(p.q)}&i=${p.i}&t=${encodeURIComponent(p.t)}${dubParam(b.dataset.dub === "1")}`; });
   }
   api(`/api/mediaserver/series?name=${encodeURIComponent(data.series_name)}`).then((r) => {
     if (r.exists) $("#jf-badge").innerHTML = `<span class="pill ok">In ${serverName(settings.media_server)}</span>`;
@@ -429,8 +479,11 @@ async function showView() {
 
   const bar = document.createElement("div");
   bar.className = "actionbar";
-  bar.innerHTML = `<div class="summary"><b id="pick-count">Nothing selected</b><span class="muted" id="pick-detail">Pick episodes below</span></div>
-    <button class="primary" id="download" disabled>Download</button>`;
+  bar.innerHTML = can.download()
+    ? `<div class="summary"><b id="pick-count">Nothing selected</b><span class="muted" id="pick-detail">Pick episodes below</span></div>
+    <button class="primary" id="download" disabled>Download</button>`
+    : `<div class="summary"><b>View only</b><span class="muted">Your account can browse but not download. Ask an admin for access.</span></div>
+    <span id="pick-count" hidden></span><span id="pick-detail" hidden></span><button id="download" hidden disabled></button>`;
   document.body.append(bar);
 
   const refreshExisting = async () => {
@@ -581,9 +634,9 @@ const expanded = new Set();
 
 async function downloadsView() {
   view.innerHTML = `
-    <div class="section-head"><h1>Downloads</h1><button class="small" id="clear">Clear finished</button></div>
+    <div class="section-head"><h1>Downloads</h1>${can.download() ? `<button class="small" id="clear">${can.admin() ? "Clear finished" : "Clear my finished"}</button>` : ""}</div>
     <div id="queue">${loading()}</div>`;
-  $("#clear").addEventListener("click", async () => {
+  $("#clear")?.addEventListener("click", async () => {
     const r = await api("/api/queue/clear-finished", { method: "POST" });
     toast(`Removed ${r.removed} finished ${r.removed === 1 ? "batch" : "batches"}`);
     renderQueue();
@@ -595,8 +648,8 @@ async function downloadsView() {
 const STATUS_PILL = { queued: "", running: "accent", done: "ok", failed: "bad", cancelled: "warn", skipped: "" };
 
 async function renderQueue() {
-  let batches;
-  try { ({ batches } = await api("/api/queue")); }
+  let batches, me, isAdmin;
+  try { ({ batches, me, admin: isAdmin } = await api("/api/queue")); }
   catch (e) { if ($("#queue")) $("#queue").innerHTML = `<div class="error-box">${esc(e.message)}</div>`; return; }
   const el = $("#queue");
   if (!el) return;
@@ -606,6 +659,7 @@ async function renderQueue() {
   }
   el.innerHTML = batches.map((b) => {
     const total = b.items.length;
+    const mine = isAdmin || (can.download() && b.created_by === me);
     const progress = b.items.reduce((n, i) => n + (i.status === "done" ? 100 : i.status === "running" ? i.progress : 0), 0) / Math.max(total, 1);
     const open = expanded.has(b.id) || b.counts.running > 0 && !expanded.has(-b.id);
     const state = b.counts.running ? `<span class="pill accent">Downloading</span>`
@@ -617,19 +671,19 @@ async function renderQueue() {
         <div class="grow">
           <b>${esc(b.series_name)} · S${String(b.season).padStart(2, "0")}</b>
           <div class="muted small">${esc(b.title)}</div>
-          <div class="muted small">${b.counts.done}/${total} episodes · ${esc(b.mode)} · ${esc(b.location || "?")}</div>
+          <div class="muted small">${b.counts.done}/${total} episodes · ${esc(b.mode)} · ${esc(b.location || "?")}${b.owner ? ` · by ${esc(b.owner)}` : ""}</div>
           <div class="progress ${b.active ? "" : "done"}" style="margin-top:.4rem"><i style="width:${progress.toFixed(1)}%"></i></div>
         </div>
         ${state}
       </div>
       ${b.warning ? `<div class="warn-box" style="margin:0 14px 12px">${esc(b.warning)}</div>` : ""}
       ${open ? `
-        <div class="batch-tools">
+        ${mine ? `<div class="batch-tools">
           <button class="small" data-b="up" aria-label="Move up">↑</button>
           <button class="small" data-b="down" aria-label="Move down">↓</button>
           ${b.counts.failed + b.counts.cancelled ? `<button class="small" data-b="retry">Retry failed</button>` : ""}
           ${b.active ? `<button class="small danger" data-b="cancel">Cancel</button>` : `<button class="small" data-b="remove">Remove</button>`}
-        </div>
+        </div>` : ""}
         <div class="items">${b.items.map((i) => `
           <div class="item" data-item="${i.id}">
             <span class="epno">E${esc(i.episode)}${b.offset && /^\d+$/.test(i.episode) ? `<div class="muted small">→ E${Number(i.episode) + b.offset}</div>` : ""}</span>
@@ -639,7 +693,7 @@ async function renderQueue() {
               ${i.detail ? `<div class="detail">${esc(i.detail)}</div>` : ""}
               ${i.error ? `<div class="err">${esc(i.error)}</div>` : ""}
             </div>
-            <div class="row">
+            <div class="row" ${mine ? "" : "hidden"}>
               ${i.status === "queued" ? `<button class="small icon" data-i="up" aria-label="Move up">↑</button><button class="small icon" data-i="down" aria-label="Move down">↓</button>` : ""}
               ${["failed", "cancelled"].includes(i.status) ? `<button class="small" data-i="retry">Retry</button>` : ""}
               ${["queued", "running"].includes(i.status) ? `<button class="small icon danger" data-i="cancel" aria-label="Cancel">✕</button>` : ""}
@@ -931,7 +985,7 @@ async function locationsPanel(container, { onChange, wizard = false } = {}) {
           <div data-editor style="grid-column:1/-1"></div>
         </div>`;
       }).join("") : `<p class="muted">No download locations yet.</p>`}
-      ${data.network_shares ? "" : `<div class="warn-box">SMB/NFS shares can only be added when anidl runs in its LXC. Local folders work everywhere.</div>`}
+      ${data.network_shares ? "" : `<div class="warn-box">SMB/NFS shares can only be added when AniStash runs in its LXC. Local folders work everywhere.</div>`}
       <div id="new-loc"></div>
       <button class="block" id="add-loc" style="margin-top:.75rem">+ Add location</button>`;
 
@@ -976,7 +1030,8 @@ async function locationsPanel(container, { onChange, wizard = false } = {}) {
 function defaultsForm(s) {
   return `
     <div class="grid2">
-      <label class="field"><span>Audio</span><select name="mode"><option value="sub" ${s.mode === "sub" ? "selected" : ""}>Sub</option><option value="dub" ${s.mode === "dub" ? "selected" : ""}>Dub</option></select></label>
+      <label class="field"><span>Sub or dub</span><select name="mode"><option value="sub" ${s.mode === "sub" ? "selected" : ""}>Sub (Japanese audio, subtitles)</option><option value="dub" ${s.mode === "dub" ? "selected" : ""}>Dub (English audio)</option></select>
+        <div class="hint">What search and show pages start with. You can still switch per download.</div></label>
       <label class="field"><span>Quality</span>${qualitySelect(s.quality)}</label>
       <label class="field"><span>Downloads at once</span><select name="concurrency">${[1, 2, 3, 4, 5].map((n) => `<option ${n === s.concurrency ? "selected" : ""}>${n}</option>`).join("")}</select></label>
       <label class="field"><span>File naming</span><select name="naming">
@@ -1010,7 +1065,7 @@ function mediaServerForm(s) {
         <select name="library_id">${s.media_library_id
           ? `<option value="${esc(s.media_library_id)}" selected>${esc(s.media_library_name || s.media_library_id)}</option>`
           : `<option value="">Test the connection to load your libraries</option>`}</select>
-        <div class="hint">anidl only ever scans this one library, never everything on the server. With a "media server sees this as" path on the location, it scans just the new season folders, which is faster still.</div>
+        <div class="hint">AniStash only ever scans this one library, never everything on the server. With a "media server sees this as" path on the location, it scans just the new season folders, which is faster still.</div>
         <div class="hint lib-paths"></div></label>
       <label class="field"><span>When to scan</span><select name="media_refresh">
         <option value="season" ${s.media_refresh === "season" ? "selected" : ""}>When a season finishes</option>
@@ -1092,7 +1147,162 @@ async function testMediaServer(form) {
   }
 }
 
+function accountCard() {
+  const role = status.user?.role || "";
+  return `
+    <form class="card" id="pw"><h2>Your account</h2>
+      <p class="muted">Signed in as <b>${esc(status.username)}</b> · ${esc(role)}</p>
+      <div class="grid2">
+        <label class="field"><span>Current password</span><input type="password" name="current" autocomplete="current-password" required></label>
+        <label class="field"><span>New password</span><input type="password" name="new" autocomplete="new-password" minlength="10" required>
+          <div class="hint">At least 10 characters.</div></label>
+      </div>
+      <div class="row end"><button class="primary" type="submit">Change password</button></div>
+      <h3 style="margin-top:1rem">Signed-in devices</h3>
+      <div id="sessions" class="muted small">${loading()}</div>
+      <div class="row" style="margin-top:.75rem"><button type="button" id="logout" class="ghost">Log out</button>
+        <button type="button" id="logout-all" class="danger small">Log out on all devices</button></div>
+    </form>`;
+}
+
+function bindAccountCard() {
+  $("#pw").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try { await busy(e.submitter, () => api("/api/account/password", { method: "POST", body: formData(e.target) })); toast("Password changed. Other devices were signed out."); e.target.reset(); }
+    catch (err) { toast(err.message, true); }
+  });
+  $("#logout").addEventListener("click", async () => { await api("/api/logout", { method: "POST" }); location.hash = "#/login"; });
+  $("#logout-all").addEventListener("click", async () => {
+    if (!confirm("Log out everywhere, including this device?")) return;
+    await api("/api/account/logout-everywhere", { method: "POST" });
+    location.hash = "#/login";
+  });
+  api("/api/account/sessions").then(({ sessions }) => {
+    $("#sessions").innerHTML = sessions.map((x) => `<div>${esc(x.user_agent.replace(/^Mozilla\/5\.0 \(([^)]*)\).*$/, "$1").slice(0, 60) || "Unknown device")} · ${esc(x.ip)} · last active ${new Date(x.last_seen_at * 1000).toLocaleString()}</div>`).join("") || "None";
+  }).catch(() => {});
+}
+
+const ROLE_HELP = {
+  admin: "Everything, including users, locations and settings",
+  member: "Browse and download; manage their own downloads",
+  viewer: "Browse only",
+};
+
+function randomPassword() {
+  // 16 characters from an unambiguous alphabet, from the browser's cryptographic RNG
+  const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  const bytes = crypto.getRandomValues(new Uint32Array(16));
+  return Array.from(bytes, (b) => chars[b % chars.length]).join("");
+}
+
+async function usersPanel(container) {
+  let data;
+  try { data = await api("/api/users"); }
+  catch (e) { container.innerHTML = `<div class="error-box">${esc(e.message)}</div>`; return; }
+  const when = (t) => t ? new Date(t * 1000).toLocaleDateString() : "never";
+  container.innerHTML = `
+    ${data.users.map((u) => `
+      <div class="loc" data-user="${u.id}">
+        <div style="min-width:0">
+          <b>${esc(u.username)}</b> <span class="pill ${u.role === "admin" ? "accent" : ""}">${esc(u.role)}</span>
+          ${u.disabled ? `<span class="pill bad">disabled</span>` : ""}${u.must_change_password ? ` <span class="pill warn">must change password</span>` : ""}
+          ${u.id === status.user.id ? `<span class="pill">you</span>` : ""}
+          <div class="muted small">Last login ${esc(when(u.last_login_at))}</div>
+        </div>
+        <div class="row" style="align-content:start">
+          ${u.id === status.user.id ? "" : `
+            <select class="small" data-role aria-label="Role for ${esc(u.username)}" style="min-height:36px;width:auto">
+              ${data.roles.map((r) => `<option value="${r}" ${r === u.role ? "selected" : ""}>${r}</option>`).join("")}</select>
+            <button class="small" data-act="password">Reset password</button>
+            <button class="small" data-act="${u.disabled ? "enable" : "disable"}">${u.disabled ? "Enable" : "Disable"}</button>
+            <button class="small danger" data-act="delete">Delete</button>`}
+        </div>
+      </div>`).join("")}
+    <details class="more" id="add-user-box" style="margin-top:1rem"><summary>+ Add a user</summary>
+      <form id="add-user" style="margin-top:.75rem">
+        <div class="grid2">
+          <label class="field"><span>Username</span><input type="text" name="username" autocapitalize="off" autocomplete="off" required pattern="[A-Za-z0-9._\-]{3,32}"></label>
+          <label class="field"><span>Role</span><select name="role">${data.roles.map((r) => `<option value="${r}" ${r === "member" ? "selected" : ""}>${r}</option>`).join("")}</select>
+            <div class="hint" data-role-help>${ROLE_HELP.member}</div></label>
+        </div>
+        <label class="field"><span>Temporary password</span>
+          <div class="row"><input type="text" name="password" class="grow" autocomplete="off" minlength="10" required spellcheck="false"><button type="button" class="small" data-generate>Generate</button></div>
+          <div class="hint">Give it to them privately. It's shown only now and stored only as a hash.</div></label>
+        <label class="check"><input type="checkbox" name="must_change" checked> Make them choose their own password at first login</label>
+        <div class="row end"><button class="primary" type="submit">Add user</button></div>
+      </form>
+    </details>`;
+
+  const form = $("#add-user", container);
+  form.role.addEventListener("change", () => { $("[data-role-help]", form).textContent = ROLE_HELP[form.role.value]; });
+  $("[data-generate]", form).addEventListener("click", () => { form.password.value = randomPassword(); });
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const d = formData(form);
+    try {
+      await busy(e.submitter, () => api("/api/users", { method: "POST", body: { username: d.username, password: d.password, role: d.role, must_change: d.must_change } }));
+      toast(`Added ${d.username}`);
+      usersPanel(container);
+    } catch (err) { toast(err.message, true); }
+  });
+  for (const row of $$("[data-user]", container)) {
+    const id = Number(row.dataset.user);
+    const u = data.users.find((x) => x.id === id);
+    $("[data-role]", row)?.addEventListener("change", async (e) => {
+      try { await api(`/api/users/${id}`, { method: "PUT", body: { role: e.target.value } }); toast(`${u.username} is now ${e.target.value}. Their sessions were signed out.`); usersPanel(container); }
+      catch (err) { toast(err.message, true); e.target.value = u.role; }
+    });
+    for (const b of $$("[data-act]", row)) {
+      b.addEventListener("click", async () => {
+        try {
+          if (b.dataset.act === "password") {
+            const pw = randomPassword();
+            if (!confirm(`Set a new temporary password for ${u.username}?\n\nThey'll have to change it at next login, and all their sessions end.`)) return;
+            await api(`/api/users/${id}/password`, { method: "POST", body: { password: pw, must_change: true } });
+            sheet(`<h2>New password for ${esc(u.username)}</h2>
+              <p>Give them this temporary password privately. It won't be shown again.</p>
+              <p><code style="font-size:1.2rem;user-select:all">${esc(pw)}</code></p>
+              <button class="primary block" data-close>Done</button>`).querySelector("[data-close]").onclick = (ev) => ev.target.closest(".sheet-backdrop").remove();
+          } else if (b.dataset.act === "delete") {
+            if (!confirm(`Delete ${u.username}? Their downloads stay.`)) return;
+            await api(`/api/users/${id}`, { method: "DELETE" });
+          } else {
+            await api(`/api/users/${id}`, { method: "PUT", body: { disabled: b.dataset.act === "disable" } });
+          }
+          usersPanel(container);
+        } catch (err) { toast(err.message, true); }
+      });
+    }
+  }
+}
+
+const AUDIT_LABELS = {
+  login: "Logged in", login_failed: "Failed login", login_locked: "Login blocked (too many tries)", logout: "Logged out",
+  logout_everywhere: "Logged out everywhere", password_changed: "Changed password", password_change_failed: "Wrong current password",
+  password_reset: "Reset password", user_created: "Added user", user_changed: "Changed user", user_deleted: "Deleted user",
+  settings_changed: "Changed settings", media_server_changed: "Changed media server", location_added: "Added location",
+  location_changed: "Changed location", location_removed: "Removed location", queued: "Queued download",
+  update_started: "Started update", admin_set: "Set admin (console)",
+};
+
+async function auditPanel(container) {
+  try {
+    const { entries } = await api("/api/audit");
+    container.innerHTML = entries.length ? `<div class="audit">${entries.slice(0, 100).map((e) => `
+      <div class="${["login_failed", "login_locked", "password_change_failed"].includes(e.action) ? "bad" : ""}">
+        <span class="muted">${esc(new Date(e.at * 1000).toLocaleString())}</span>
+        <b>${esc(e.actor)}</b> ${esc(AUDIT_LABELS[e.action] || e.action)}${e.detail ? `: ${esc(e.detail)}` : ""}
+        ${e.ip ? `<span class="muted">· ${esc(e.ip)}</span>` : ""}</div>`).join("")}</div>` : `<p class="muted">Nothing yet.</p>`;
+  } catch (e) { container.innerHTML = `<div class="error-box">${esc(e.message)}</div>`; }
+}
+
 async function settingsView() {
+  if (!can.admin()) {
+    // Members and viewers only manage their own account
+    view.innerHTML = `<h1>Settings</h1>${accountCard()}`;
+    bindAccountCard();
+    return;
+  }
   view.innerHTML = loading();
   const [s, sys] = await Promise.all([api("/api/settings"), api("/api/system")]);
   view.innerHTML = `
@@ -1102,32 +1312,33 @@ async function settingsView() {
     <form class="card" id="defaults"><h2>Downloads</h2>${defaultsForm(s)}
       <div class="row end"><button class="primary" type="submit">Save</button></div></form>
 
+    <div class="card"><h2>Users</h2>
+      <p class="muted small">Admins manage everything. Members can browse and download. Viewers can only browse.</p>
+      <div id="users"></div></div>
+
     <form class="card" id="ms"><h2>Media server</h2>${mediaServerForm(s)}
       <div class="row end"><button type="button" id="ms-test">Test</button><button class="primary" type="submit">Save</button></div></form>
+
+    ${accountCard()}
+
+    <div class="card"><h2>Security log</h2>
+      <p class="muted small">Logins, failed attempts and changes to users and settings.</p>
+      <div id="audit"></div></div>
 
     <div class="card"><h2>System</h2>
       <div class="checks">
         <div><span>ani-cli</span><span>${esc(sys.ani_cli || "not found")}</span></div>
         <div><span>yt-dlp</span><span>${esc(sys.yt_dlp || "not found")}</span></div>
         <div><span>ffmpeg</span><span>${esc(sys.ffmpeg || "not found")}</span></div>
-        <div><span>anidl</span><span>v${esc(status.version)}${sys.latest ? ` · newest release ${esc(sys.latest)}` : ""}</span></div>
+        <div><span>AniStash</span><span>v${esc(status.version)}${sys.latest ? ` · newest release ${esc(sys.latest)}` : ""}</span></div>
       </div>
-      ${sys.update_available ? `<div class="ok-box">anidl ${esc(sys.latest)} is available.
-        <div class="row" style="margin-top:.5rem"><button class="primary small" id="update-app" ${sys.helper ? "" : "disabled"}>Update anidl</button>
-        <a class="small" href="https://github.com/JustinMarxGit/anidl/releases" target="_blank" rel="noopener">What's new</a></div></div>` : ""}
+      ${sys.update_available ? `<div class="ok-box">AniStash ${esc(sys.latest)} is available.
+        <div class="row" style="margin-top:.5rem"><button class="primary small" id="update-app" ${sys.helper ? "" : "disabled"}>Update AniStash</button>
+        <a class="small" href="https://github.com/JustinMarxGit/anistash/releases" target="_blank" rel="noopener">What's new</a></div></div>` : ""}
       <p class="muted small">If searches or downloads start failing, the anime site probably changed. Updating ani-cli usually fixes it. Tools also update weekly on their own.</p>
       <button id="update-tools" ${sys.helper ? "" : "disabled"}>Update ani-cli and yt-dlp</button>
       <pre id="update-out" class="small muted" style="white-space:pre-wrap" hidden></pre>
     </div>
-
-    <form class="card" id="pw"><h2>Account</h2>
-      <p class="muted">Signed in as <b>${esc(status.username)}</b>.</p>
-      <div class="grid2">
-        <label class="field"><span>Current password</span><input type="password" name="current" autocomplete="current-password" required></label>
-        <label class="field"><span>New password</span><input type="password" name="new" autocomplete="new-password" minlength="8" required></label>
-      </div>
-      <div class="row end"><button type="button" id="logout" class="ghost">Log out</button><button class="primary" type="submit">Change password</button></div>
-    </form>
 
     <div class="card"><h2>Setup</h2>
       <p class="muted">Walk through the setup wizard again. Your locations, settings and queue are kept.</p>
@@ -1135,9 +1346,12 @@ async function settingsView() {
     </div>`;
 
   locationsPanel($("#locs"));
+  usersPanel($("#users"));
+  auditPanel($("#audit"));
+  bindAccountCard();
   $("#defaults").addEventListener("submit", async (e) => {
     e.preventDefault();
-    try { await busy(e.submitter, () => api("/api/settings", { method: "PUT", body: formData(e.target) })); toast("Saved"); }
+    try { prefs = await busy(e.submitter, () => api("/api/settings", { method: "PUT", body: formData(e.target) })); toast("Saved"); }
     catch (err) { toast(err.message, true); }
   });
   bindMediaServerForm($("#ms"));
@@ -1157,10 +1371,10 @@ async function settingsView() {
     } catch (err) { toast(err.message, true); }
   });
   $("#update-app")?.addEventListener("click", async (e) => {
-    if (!confirm(`Update anidl to ${sys.latest}? The page reconnects when it's done; running downloads restart.`)) return;
+    if (!confirm(`Update AniStash to ${sys.latest}? The page reconnects when it's done; running downloads restart.`)) return;
     try {
       await busy(e.currentTarget, () => api("/api/system/update-app", { method: "POST" }));
-      toast("Updating… this page reloads when anidl is back.");
+      toast("Updating… this page reloads when AniStash is back.");
       // The service restarts during the update: wait for the new version to answer
       const started = Date.now();
       const poll = setInterval(async () => {
@@ -1168,16 +1382,10 @@ async function settingsView() {
           const s2 = await api("/api/status");
           if (s2.version !== status.version) { clearInterval(poll); location.reload(); }
         } catch { /* restarting */ }
-        if (Date.now() - started > 300000) { clearInterval(poll); toast("The update is taking long. Check `anidl-update` in the console.", true); }
+        if (Date.now() - started > 300000) { clearInterval(poll); toast("The update is taking long. Check `anistash-update` in the console.", true); }
       }, 3000);
     } catch (err) { toast(err.message, true); }
   });
-  $("#pw").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    try { await busy(e.submitter, () => api("/api/account/password", { method: "POST", body: formData(e.target) })); toast("Password changed"); e.target.reset(); }
-    catch (err) { toast(err.message, true); }
-  });
-  $("#logout").addEventListener("click", async () => { await api("/api/logout", { method: "POST" }); location.hash = "#/login"; });
 }
 
 // Setup wizard --------------------------------------------------------------------------------------
@@ -1216,8 +1424,8 @@ async function setupView() {
     if (step >= 2 && !settings) settings = await api("/api/settings");
 
     if (step === 0) {
-      view.innerHTML = frame("Welcome to anidl", `
-        <p>anidl lets you browse anime and download episodes to your NAS from any device, including your phone. This wizard sets up an admin account, where downloads go, and the optional Jellyfin or Plex connection.</p>
+      view.innerHTML = frame("Welcome to AniStash", `
+        <p>AniStash lets you browse anime and download episodes to your NAS from any device, including your phone. This wizard sets up an admin account, where downloads go, and the optional Jellyfin or Plex connection.</p>
         <h2>System check</h2>
         <div id="checks">${loading("Checking tools and trying a test search…")}</div>`, { back: false });
       bindBack();
@@ -1251,8 +1459,9 @@ async function setupView() {
         <form id="admin">
           <div id="err"></div>
           <label class="field"><span>Username</span><input type="text" name="username" autocomplete="username" autocapitalize="off" required></label>
-          <label class="field"><span>Password</span><input type="password" name="password" autocomplete="new-password" minlength="8" required></label>
-          <label class="field"><span>Repeat password</span><input type="password" name="password2" autocomplete="new-password" minlength="8" required></label>
+          <label class="field"><span>Password</span><input type="password" name="password" autocomplete="new-password" minlength="10" required>
+            <div class="hint">At least 10 characters. A few random words is easy to remember and hard to guess.</div></label>
+          <label class="field"><span>Repeat password</span><input type="password" name="password2" autocomplete="new-password" minlength="10" required></label>
         </form>`, { next: "Create account" });
       bindBack();
       $("#next").addEventListener("click", async (e) => {
@@ -1284,7 +1493,7 @@ async function setupView() {
     if (step === 3) {
       if (!locs.length) locs = (await api("/api/locations")).locations;
       view.innerHTML = frame("Media server (optional)", `
-        <p class="muted">If you use Jellyfin or Plex, anidl can tell it to scan new downloads right away, with no need to wait for the scheduled scan. It only ever scans your anime library.</p>
+        <p class="muted">If you use Jellyfin or Plex, AniStash can tell it to scan new downloads right away, with no need to wait for the scheduled scan. It only ever scans your anime library.</p>
         <form id="ms">${mediaServerForm(settings)}
           <div data-server ${settings.media_server === "none" ? "hidden" : ""}>
           ${locs.length ? `<h3>How the server sees your locations</h3><p class="muted small">The media server usually mounts the same share at a different path. Fill these in for the fastest, folder-only scans.</p>
@@ -1324,7 +1533,7 @@ async function setupView() {
       bindBack();
       $("#next").addEventListener("click", async (e) => {
         try {
-          settings = await busy(e.currentTarget, () => api("/api/settings", { method: "PUT", body: formData($("#defaults")) }));
+          settings = prefs = await busy(e.currentTarget, () => api("/api/settings", { method: "PUT", body: formData($("#defaults")) }));
           await go(5);
         } catch (err) { toast(err.message, true); }
       });
@@ -1341,7 +1550,7 @@ async function setupView() {
           <dt>Media server</dt><dd>${settings.media_server !== "none" ? `${serverName(settings.media_server)} at ${esc(settings.media_url)} · ${settings.media_refresh === "off" ? "scanning off" : `scans ${esc(settings.media_library_name || "nothing (no library chosen)")} when ${settings.media_refresh === "episode" ? "each episode" : "each season"} finishes`}` : "none"}</dd>
           <dt>Defaults</dt><dd>${esc(settings.mode)} · ${esc(settings.quality)} · ${settings.concurrency} at once · ${esc(settings.naming)} naming</dd>
         </dl>
-        <p class="muted">Tip: on your phone, use "Add to Home Screen" to open anidl like an app.</p>`, { next: "Finish" });
+        <p class="muted">Tip: on your phone, use "Add to Home Screen" to open AniStash like an app.</p>`, { next: "Finish" });
       bindBack();
       $("#next").addEventListener("click", async (e) => {
         try {
