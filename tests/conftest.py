@@ -18,8 +18,18 @@ def fake_video(tmp_path_factory):
     return path
 
 
+@pytest.fixture(scope="session")
+def fake_dub_video(tmp_path_factory):
+    """Same picture, different (higher) audio tone, like an English dub of the same episode."""
+    path = tmp_path_factory.mktemp("dub") / "dub.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=12:size=160x90:rate=5",
+                    "-f", "lavfi", "-i", "sine=frequency=880:duration=12", "-c:v", "libx264", "-c:a", "aac",
+                    "-shortest", "-f", "mpegts", str(path)], check=True)
+    return path
+
+
 @pytest.fixture(autouse=True)
-def isolated(tmp_path, monkeypatch, fake_video):
+def isolated(tmp_path, monkeypatch, fake_video, fake_dub_video):
     """Each test gets its own data dir and the fake ani-cli."""
     import asyncio
 
@@ -33,6 +43,9 @@ def isolated(tmp_path, monkeypatch, fake_video):
     monkeypatch.setattr(config, "ANI_CLI", str(fake))
     monkeypatch.setattr(config, "HELPER", str(tmp_path / "no-helper"))
     monkeypatch.setenv("FAKE_VIDEO", str(fake_video))
+    monkeypatch.setenv("FAKE_DUB_VIDEO", str(fake_dub_video))
+    monkeypatch.delenv("FAKE_DUB_SAME", raising=False)
+    monkeypatch.delenv("FAKE_NO_DUB", raising=False)
     monkeypatch.delenv("FAKE_FAIL", raising=False)
     monkeypatch.delenv("FAKE_BROKEN", raising=False)
     monkeypatch.delenv("FAKE_EPISODES", raising=False)

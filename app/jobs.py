@@ -13,7 +13,7 @@ import os
 import shutil
 import time
 
-from . import anicli, config, db, locations, mediaserver, postprocess
+from . import anicli, config, db, library, locations, mediaserver, postprocess
 from .naming import episode_path
 
 log = logging.getLogger("anistash.jobs")
@@ -57,8 +57,8 @@ def enqueue(series_name: str, location_id: int, mode: str, quality: str, entries
     if not series_name:
         raise QueueError("Series name is required.")
     locations.get(location_id)
-    if mode not in ("sub", "dub"):
-        raise QueueError("Mode must be sub or dub.")
+    if mode not in ("sub", "dub", "both"):
+        raise QueueError("Mode must be sub, dub or both.")
     skip_existing = always_skip_existing or db.get_setting("skip_existing")
     added, skipped_queued, skipped_existing, batch_ids = 0, 0, 0, []
     for entry in entries:
@@ -235,7 +235,7 @@ async def _download_best(item, index: int, dub: bool, workdir, on_progress,
         if _cancelled(item_id):
             raise asyncio.CancelledError()
         label = f"{quality}p" if quality.isdigit() else quality
-        current["label"] = label
+        current["label"] = (("Dub " if dub else "Sub ") if item["mode"] == "both" else "") + label
         _set_item(item_id, progress=0, detail=f"Downloading {label}…" if not attempt
                   else f"{errors[-1]} Trying {label}…")
         shutil.rmtree(workdir, ignore_errors=True)
@@ -249,7 +249,8 @@ async def _download_best(item, index: int, dub: bool, workdir, on_progress,
                 raise asyncio.CancelledError()
             _set_item(item_id, detail=f"Checking and remuxing {label}…", progress=100)
             outputs = await asyncio.to_thread(
-                postprocess.finalize, files, str(workdir), f"{item['series_name']} S{item['season']:02d}E{item['episode']}")
+                postprocess.finalize, files, str(workdir), f"{item['series_name']} S{item['season']:02d}E{item['episode']}",
+                "dub" if dub else "sub")
             return outputs, label
         except (anicli.AniCliError, postprocess.BrokenDownload) as exc:
             if _cancelled(item_id):
@@ -257,6 +258,40 @@ async def _download_best(item, index: int, dub: bool, workdir, on_progress,
             errors.append(f"{label} failed ({exc}).")
             log.info("Episode %s of %s: %s", item["episode"], item["title"], errors[-1])
     raise anicli.AniCliError(" ".join(errors) or "No quality could be downloaded.")
+
+
+async def _download_both(item, index: int, workdir, on_progress, current) -> tuple[list[tuple[str, str]], str, str]:
+    """Sub and dub in one file with two audio tracks (Japanese and English).
+
+    The sub comes first (its video, Japanese audio and subtitles are kept); the dub only
+    contributes its English audio. If the dub can't be added, the episode is still saved
+    with Japanese audio and the returned note says why.
+    """
+    item_id = item["id"]
+    outputs, quality_used = await _download_best(item, index, False, workdir / "sub", on_progress, current)
+    # Try the dub at the same quality first, so its download stays as small as the sub's
+    wanted = dict(item)
+    wanted["wanted_quality"] = quality_used.rstrip("p") if quality_used.rstrip("p").isdigit() else item["wanted_quality"]
+    try:
+        dub_index = await anicli.resolve_index(item["query"], item["result_index"], item["title"], True)
+        dub_outputs, _ = await _download_best(wanted, dub_index, True, workdir / "dub", on_progress, current)
+        sub_video = next(path for path, suffix in outputs if suffix == ".mp4")
+        dub_video = next(path for path, suffix in dub_outputs if suffix == ".mp4")
+        merged = str(workdir / "dual.mp4")
+        _set_item(item_id, detail="Combining Japanese and English audio…")
+        await asyncio.to_thread(postprocess.merge_dual_audio, sub_video, dub_video, merged,
+                                db.get_setting("both_default"), f"{item['series_name']} S{item['season']:02d}E{item['episode']}")
+        outputs = [(merged, ".mp4") if suffix == ".mp4" else (path, suffix) for path, suffix in outputs]
+        return outputs, f"{quality_used} · sub+dub", ""
+    except asyncio.CancelledError:
+        raise
+    except postprocess.SameAudio:
+        note = "No English dub on the site yet (it served the Japanese audio again), so this has Japanese audio only."
+    except (anicli.AniCliError, postprocess.BrokenDownload) as exc:
+        note = f"Saved with Japanese audio only: the dub couldn't be added ({exc})."
+    if _cancelled(item_id):
+        raise asyncio.CancelledError()
+    return outputs, f"{quality_used} · sub only", note
 
 
 def _cancelled(item_id: int) -> bool:
@@ -294,13 +329,17 @@ async def _run_item(item) -> None:
             raise locations.LocationError(f"{location['name']} isn't mounted. Test it under Settings → Locations.")
         dub = item["mode"] == "dub"
         index = await anicli.resolve_index(item["query"], item["result_index"], item["title"], dub)
-        outputs, quality_used = await _download_best(item, index, dub, workdir, on_progress, current)
+        note = ""
+        if item["mode"] == "both":
+            outputs, quality_used, note = await _download_both(item, index, workdir, on_progress, current)
+        else:
+            outputs, quality_used = await _download_best(item, index, dub, workdir, on_progress, current)
         _set_item(item_id, detail="Moving to " + location["name"] + "…", progress=100)
         naming = db.get_setting("naming")
         target = episode_path(location["path"], item["series_name"], item["season"], item["episode"], item["title"],
                               naming, item["episode_offset"])
         video = await asyncio.to_thread(_move_into_place, outputs, str(target))
-        _set_item(item_id, status="done", detail="", dest=video, quality=quality_used, log="\n".join(log_lines))
+        _set_item(item_id, status="done", detail=note, dest=video, quality=quality_used, log="\n".join(log_lines))
         _after_done(item, video, location)
     except asyncio.CancelledError:
         _set_item(item_id, status="cancelled", detail="")
@@ -337,6 +376,7 @@ def rescan(batch_id: int) -> int:
 
 
 def _after_done(item, video: str | None, location) -> None:
+    library.invalidate()
     refresh = db.get_setting("media_refresh")
     if refresh == "off" or not video:
         return

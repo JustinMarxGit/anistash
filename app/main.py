@@ -15,7 +15,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import anicli, anilist, auth, config, db, follows, jobs, locations, mediaserver, setup, shows
+from . import anicli, anilist, auth, config, db, follows, jobs, library, locations, mediaserver, setup, shows
 from .naming import base_title, number_seasons
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -465,6 +465,12 @@ async def plan(entries: list[dict] = Body(...), dub: bool = Body(False), user=ME
     shows.set_offsets(entries)
     titles = [e["title"] for e in entries if not e["special"]] or [entries[0]["title"]]
     return {"series_name": base_title(titles[0]), "entries": entries}
+
+
+@app.post("/api/library/match")
+async def library_match(items: list[dict] = Body(..., embed=True), user=VIEWER):
+    """Which of these shows ({id, titles}) are already in your folders or media server library."""
+    return {"matches": await library.match(items[:200])}
 
 
 @app.post("/api/existing")

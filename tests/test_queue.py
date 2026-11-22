@@ -41,7 +41,7 @@ def test_enqueue_validates(location):
     with pytest.raises(jobs.QueueError):
         jobs.enqueue(" ", location["id"], "sub", "best", [entry()])
     with pytest.raises(jobs.QueueError):
-        jobs.enqueue("Show", location["id"], "both", "best", [entry()])
+        jobs.enqueue("Show", location["id"], "raw", "best", [entry()])
     with pytest.raises(locations.LocationError):
         jobs.enqueue("Show", 999, "sub", "best", [entry()])
 
@@ -509,3 +509,54 @@ def test_rescan_after_a_failed_scan(location, monkeypatch):
     assert jobs.rescan(batch["id"]) == 1
     assert notified == [[location["path"] + "/Show/Season 02"]]
     assert jobs.snapshot()[0]["warning"] == ""
+
+
+def _audio_tracks(path):
+    import json as _json
+    import subprocess
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries",
+                          "stream=index:stream_tags=language,handler_name:stream_disposition=default", "-of", "json", str(path)],
+                         capture_output=True, text=True).stdout
+    return [(s["tags"].get("language"), s["tags"].get("handler_name"), s["disposition"]["default"])
+            for s in _json.loads(out)["streams"]]
+
+
+def test_both_gives_one_file_with_japanese_and_english_audio(location, isolated):
+    db.set_settings(setup_complete=True, media_refresh="off", both_default="sub")
+    jobs.enqueue("Show", location["id"], "both", "best", [entry(episodes=["1"])])
+    _drive_worker(30)
+    [item] = jobs.snapshot()[0]["items"]
+    assert item["status"] == "done" and item["quality"] == "1080p · sub+dub", item
+    video = isolated / "media" / "Show" / "Season 02" / "Show - S02E01.mp4"
+    assert _audio_tracks(video) == [("jpn", "Japanese", 1), ("eng", "English", 0)]
+    assert (video.parent / "Show - S02E01.en.srt").exists()
+
+
+def test_both_can_play_english_first(location, isolated):
+    db.set_settings(setup_complete=True, media_refresh="off", both_default="dub")
+    jobs.enqueue("Show", location["id"], "both", "best", [entry(episodes=["1"])])
+    _drive_worker(30)
+    video = isolated / "media" / "Show" / "Season 02" / "Show - S02E01.mp4"
+    assert _audio_tracks(video) == [("jpn", "Japanese", 0), ("eng", "English", 1)]
+
+
+@pytest.mark.parametrize("env, expected", [("FAKE_DUB_SAME", "No English dub on the site yet"),
+                                           ("FAKE_NO_DUB", "the dub couldn't be added")])
+def test_both_falls_back_to_japanese_only(location, isolated, monkeypatch, env, expected):
+    monkeypatch.setenv(env, "1")
+    db.set_settings(setup_complete=True, media_refresh="off")
+    jobs.enqueue("Show", location["id"], "both", "best", [entry(episodes=["1"])])
+    _drive_worker(30)
+    [item] = jobs.snapshot()[0]["items"]
+    assert item["status"] == "done" and item["quality"] == "1080p · sub only"
+    assert expected in item["detail"]
+    video = isolated / "media" / "Show" / "Season 02" / "Show - S02E01.mp4"
+    assert _audio_tracks(video) == [("jpn", "Japanese", 1)]
+
+
+def test_single_mode_files_are_language_tagged(location, isolated):
+    db.set_settings(setup_complete=True, media_refresh="off")
+    jobs.enqueue("Show", location["id"], "dub", "best", [entry(episodes=["1"])])
+    _drive_worker(30)
+    video = isolated / "media" / "Show" / "Season 02" / "Show - S02E01.mp4"
+    assert _audio_tracks(video)[0][:2] == ("eng", "English")

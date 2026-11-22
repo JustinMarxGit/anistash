@@ -66,6 +66,29 @@ function params() {
   return Object.fromEntries(new URLSearchParams(query));
 }
 
+// Library: which shows you already have (download folders + Jellyfin/Plex)
+async function libraryMatch(items) {
+  if (!items.length) return {};
+  try { return (await api("/api/library/match", { method: "POST", body: { items } })).matches; }
+  catch { return {}; }
+}
+
+function librarySummary(m) {
+  const seasons = Object.entries(m.seasons || {}).map(([n, c]) => `${n === "0" ? "Specials" : `Season ${n}`}: ${c} episode${c === 1 ? "" : "s"}`);
+  const where = [m.locations?.length ? `on ${m.locations.join(", ")}` : "", m.server ? `in ${m.server}` : ""].filter(Boolean).join(" · ");
+  return { seasons: seasons.join(", "), where };
+}
+
+function libraryBadge(m) {
+  if (!m) return "";
+  const n = m.season !== undefined ? m.season_episodes : m.episodes;
+  const label = m.season !== undefined && !m.season_episodes
+    ? "Series in library"  // another season of it is, this one isn't
+    : `In library${n ? ` · ${n} ep${n === 1 ? "" : "s"}` : ""}`;
+  const { seasons: have, where } = librarySummary(m);
+  return `<span class="inlib" data-tip="${esc(`Already in your library${where ? ` ${where}` : ""}${have ? `: ${have}` : ""}`)}">✓ ${label}</span>`;
+}
+
 function relTime(ts) {
   if (!ts) return "never";
   const diff = ts * 1000 - Date.now();
@@ -127,12 +150,161 @@ function pumpMeta() {
   }
 }
 
-// Sub or dub for this page: the toggle in the URL wins, else the saved preference
-function wantDub() {
+// Sub, dub or both for this page: the toggle in the URL wins, else the saved preference
+function wantMode() {
   const p = params();
-  return "dub" in p ? p.dub === "1" : prefs?.mode === "dub";
+  if (["sub", "dub", "both"].includes(p.mode)) return p.mode;
+  if ("dub" in p) return p.dub === "1" ? "dub" : "sub";  // links from older versions
+  return prefs?.mode || "sub";
 }
-const dubParam = (dub) => `&dub=${dub ? 1 : 0}`;
+const modeParam = (mode) => `&mode=${mode}`;
+const MODE_LABEL = { sub: "sub", dub: "dub", both: "sub + dub" };
+
+function modeToggle(mode) {
+  return `<div class="segmented" role="group" aria-label="Audio">
+    <button type="button" data-mode="sub" class="${mode === "sub" ? "on" : ""}">Sub</button>
+    <button type="button" data-mode="dub" class="${mode === "dub" ? "on" : ""}">Dub</button>
+    <button type="button" data-mode="both" class="${mode === "both" ? "on" : ""}">Sub + Dub</button>
+  </div>`;
+}
+
+// Tooltips ---------------------------------------------------------------------------
+// Every button gets a plain-language explanation of what it does: shown on hover with a
+// mouse, on keyboard focus, and on a long press on touch screens (where hover doesn't exist).
+
+const TIPS = [
+  ['[data-nav="browse"]', "Trending anime and what's airing this season"],
+  ['[data-nav="search"]', "Find a show by its name"],
+  ['[data-nav="downloads"]', "What's downloading, what's finished, and the shows you follow"],
+  ['[data-nav="settings"]', "Your account, download folders, Jellyfin/Plex and other options"],
+  ['[data-mode="sub"]', "Japanese audio with English subtitles"],
+  ['[data-mode="dub"]', "English audio"],
+  ['[data-mode="both"]', "Download both and combine them into one file, so you can switch between Japanese and English in Jellyfin or Plex"],
+  ['#follow', "Download new episodes of this show by themselves, as soon as they come out"],
+  ['#all-seasons', "Tick every episode of every season, except ones you already have"],
+  ['[data-tab]', "Show this season's episodes. The count tells you how many you've ticked"],
+  ['[data-sel="all"]', "Tick every episode in this season"],
+  ['[data-sel="none"]', "Untick everything in this season"],
+  ['[data-sel="missing"]', "Tick only the episodes you don't have yet"],
+  ['#range button', "Tick the episodes you typed, for example 1-5, 8, 12-"],
+  ['#download', "Add the ticked episodes to the download queue"],
+  ['#sel-queue', "Download every episode of the shows you ticked"],
+  ['#sel-clear', "Untick everything"],
+  ['.pick', "Tick to download this together with other results, for example every season"],
+  ['[data-tabto="queue"]', "What's downloading now and what has finished"],
+  ['[data-tabto="following"]', "Shows that download their new episodes by themselves"],
+  ['#clear', "Remove finished downloads from this list. The files stay"],
+  ['[data-b="up"]', "Download this season sooner (move it up the queue)"],
+  ['[data-b="down"]', "Download this season later (move it down the queue)"],
+  ['[data-b="retry"]', "Try the episodes that failed again"],
+  ['[data-b="cancel"]', "Stop downloading this season. Finished episodes stay"],
+  ['[data-b="remove"]', "Remove this from the list. The files stay"],
+  ['[data-b="rescan"]', "Tell Jellyfin/Plex to look for these episodes now"],
+  ['[data-i="up"]', "Download this episode sooner"],
+  ['[data-i="down"]', "Download this episode later"],
+  ['[data-i="retry"]', "Try this episode again"],
+  ['[data-i="cancel"]', "Don't download this episode"],
+  ['[data-f="check"]', "Look for new episodes of this show right now"],
+  ['[data-f="pause"]', "Stop checking this show for new episodes for now"],
+  ['[data-f="resume"]', "Start checking this show for new episodes again"],
+  ['[data-f="seasons"]', "Choose whether new seasons of this show are followed by themselves"],
+  ['[data-f="unfollow"]', "Stop downloading new episodes of this show. Episodes you have stay"],
+  ['[data-type="smb"]', "A shared folder on your NAS or a Windows PC (what most NAS boxes use)"],
+  ['[data-type="nfs"]', "An NFS export, common on Linux file servers and TrueNAS"],
+  ['[data-type="local"]', "A folder inside the AniStash container, such as a Proxmox bind mount"],
+  ['[data-connect]', "Log in to your NAS and find the anime folder for you"],
+  ['[data-change]', "Choose a different folder on the NAS"],
+  ['[data-use]', "Save downloads in this folder"],
+  ['[data-usenew]', "Create this new folder here and save downloads in it"],
+  ['[data-browse]', "List the folders this NFS server shares"],
+  ['[data-act="test"]', "Check this folder can be reached and written to (reconnects it if needed)"],
+  ['[data-act="edit"]', "Change this download folder's settings"],
+  ['[data-act="default"]', "Pick this folder automatically for new downloads"],
+  ['.loc[data-loc] [data-act="remove"]', "Stop using this folder. Files already there stay"],
+  ['#add-loc', "Add another place to save downloads"],
+  ['[data-kind="none"]', "Don't tell a media server about new downloads"],
+  ['[data-kind="jellyfin"]', "Tell your Jellyfin server about new downloads"],
+  ['[data-kind="plex"]', "Tell your Plex server about new downloads"],
+  ['#ms-test', "Check the address and key work, and load your libraries"],
+  ['#update-tools', "Get the newest ani-cli and yt-dlp. This fixes most search and download problems"],
+  ['#update-app', "Install the newest AniStash. Your settings, users and downloads stay"],
+  ['#logout', "Sign out on this device"],
+  ['#logout-all', "Sign out on every device, for example if you lost a phone"],
+  ['[data-generate]', "Make a strong random password"],
+  ['[data-user] [data-role]', "Admin: everything. Member: browse and download. Viewer: browse only"],
+  ['[data-user] [data-act="password"]', "Give them a new temporary password. They pick their own at next login"],
+  ['[data-user] [data-act="disable"]', "Stop this person from logging in (you can undo this)"],
+  ['[data-user] [data-act="enable"]', "Let this person log in again"],
+  ['[data-user] [data-act="delete"]', "Delete this account. Their downloads stay"],
+  ['#recheck', "Run the system check again"],
+  ['#skip', "Skip this step for now. You can set it up later in Settings"],
+  ['#pw-logout', "Sign out without changing the password"],
+];
+
+const tipEl = document.createElement("div");
+tipEl.className = "tip";
+tipEl.setAttribute("role", "tooltip");
+tipEl.hidden = true;
+document.body.append(tipEl);
+
+function applyTips(root = document) {
+  for (const [selector, text] of TIPS) {
+    for (const el of root.querySelectorAll(selector)) {
+      if (!el.dataset.tip) {
+        el.dataset.tip = text;
+        if (!el.getAttribute("aria-label") && !el.textContent.trim()) el.setAttribute("aria-label", text);
+      }
+    }
+  }
+}
+
+function showTip(target) {
+  const text = target?.dataset.tip;
+  if (!text) return;
+  tipEl.textContent = text;
+  tipEl.hidden = false;
+  const r = target.getBoundingClientRect();
+  const t = tipEl.getBoundingClientRect();
+  const left = Math.max(8, Math.min(r.left + r.width / 2 - t.width / 2, window.innerWidth - t.width - 8));
+  let top = r.top - t.height - 8;
+  if (top < 8) top = r.bottom + 8;
+  tipEl.style.left = `${left}px`;
+  tipEl.style.top = `${top}px`;
+}
+const hideTip = () => { tipEl.hidden = true; };
+
+let tipTimer = null;
+let longPressed = false;
+document.addEventListener("pointerover", (e) => {
+  if (e.pointerType !== "mouse") return;
+  const target = e.target.closest("[data-tip]");
+  clearTimeout(tipTimer);
+  if (!target) { hideTip(); return; }
+  tipTimer = setTimeout(() => showTip(target), 300);
+});
+document.addEventListener("pointerout", (e) => {
+  const target = e.target.closest("[data-tip]");
+  if (e.pointerType === "mouse" && target && !target.contains(e.relatedTarget)) { clearTimeout(tipTimer); hideTip(); }
+});
+document.addEventListener("pointerdown", (e) => {
+  hideTip();
+  if (e.pointerType === "mouse") return;
+  const target = e.target.closest("[data-tip]");
+  if (!target) return;
+  longPressed = false;
+  tipTimer = setTimeout(() => { longPressed = true; showTip(target); setTimeout(hideTip, 3000); }, 500);
+});
+for (const type of ["pointerup", "pointercancel"]) document.addEventListener(type, () => clearTimeout(tipTimer));
+// A long press shows the explanation; it shouldn't also press the button
+document.addEventListener("click", (e) => {
+  if (longPressed) { e.preventDefault(); e.stopPropagation(); longPressed = false; }
+}, true);
+document.addEventListener("contextmenu", (e) => { if (e.target.closest("[data-tip]") && !e.pointerType?.includes("mouse")) e.preventDefault(); });
+document.addEventListener("focusin", (e) => { if (e.target.matches?.("[data-tip]:focus-visible")) showTip(e.target); });
+document.addEventListener("focusout", hideTip);
+window.addEventListener("scroll", hideTip, { passive: true });
+new MutationObserver(() => applyTips()).observe(document.body, { childList: true, subtree: true });
+applyTips();
 
 // Router ----------------------------------------------------------------------
 
@@ -266,11 +438,17 @@ async function browseView() {
       if (!el) return;
       if (!items.length) { el.innerHTML = `<p class="muted">${esc(error || "Nothing to show.")}</p>`; return; }
       el.innerHTML = `<div class="posters">${items.map((m) => `
-        <a class="poster" href="#/search?q=${encodeURIComponent(m.title)}">
-          <div class="art" style="background-image:url('${esc(m.cover)}')"></div>
+        <a class="poster" href="#/search?q=${encodeURIComponent(m.title)}" data-card="${m.id}">
+          <div class="art" style="background-image:url('${esc(m.cover)}')"><span data-lib></span></div>
           <div class="name">${esc(m.title)}</div>
           <div class="sub">${esc([m.format?.replace("_", " "), m.year, m.episodes && `${m.episodes} eps`].filter(Boolean).join(" · "))}</div>
         </a>`).join("")}</div>`;
+      libraryMatch(items.map((m) => ({ id: m.id, titles: [m.title, m.romaji] }))).then((matches) => {
+        for (const [id, m] of Object.entries(matches)) {
+          const slot = el.querySelector(`[data-card="${id}"] [data-lib]`);
+          if (slot) slot.outerHTML = libraryBadge(m);
+        }
+      });
     }).catch((e) => { const el = $(`#${kind}`); if (el) el.innerHTML = `<p class="muted">${esc(e.message)}</p>`; });
   }
 }
@@ -279,27 +457,25 @@ async function browseView() {
 
 async function searchView() {
   const q = params().q || "";
-  const dub = wantDub();
+  const mode = wantMode();
+  const dub = mode === "dub";  // the episode lists for "both" come from the sub
   view.innerHTML = `
     <form class="searchbar" id="search">
       <input type="search" name="q" value="${esc(q)}" placeholder="Search anime…" enterkeyhint="search" aria-label="Search anime" ${q ? "" : "autofocus"}>
       <button class="primary" type="submit">Search</button>
     </form>
     <div class="row" style="margin-bottom:1rem">
-      <div class="segmented" role="group" aria-label="Audio">
-        <button type="button" data-dub="0" class="${dub ? "" : "on"}">Sub</button>
-        <button type="button" data-dub="1" class="${dub ? "on" : ""}">Dub</button>
-      </div>
+      ${modeToggle(mode)}
       <span class="muted small grow">${can.download() ? "Tick several results to queue them together, e.g. every season." : ""}</span>
     </div>
     <div id="results">${q ? loading("Searching…") : ""}</div>`;
   $("#search").addEventListener("submit", (e) => {
     e.preventDefault();
     const value = e.target.q.value.trim();
-    if (value) location.hash = `#/search?q=${encodeURIComponent(value)}${dubParam(dub)}`;
+    if (value) location.hash = `#/search?q=${encodeURIComponent(value)}${modeParam(mode)}`;
   });
-  for (const b of $$("[data-dub]")) {
-    b.addEventListener("click", () => { location.hash = `#/search?q=${encodeURIComponent(q)}${dubParam(b.dataset.dub === "1")}`; });
+  for (const b of $$("[data-mode]")) {
+    b.addEventListener("click", () => { location.hash = `#/search?q=${encodeURIComponent(q)}${modeParam(b.dataset.mode)}`; });
   }
   if (!q) return;
 
@@ -316,12 +492,20 @@ async function searchView() {
   $("#results").innerHTML = `<div class="results">${results.map((r) => `
     <div class="result" data-index="${r.index}">
       <div class="thumb" data-title="${esc(r.title)}"></div>
-      <a class="body" href="#/show?q=${encodeURIComponent(q)}&i=${r.index}&t=${encodeURIComponent(r.title)}${dubParam(dub)}">
+      <a class="body" href="#/show?q=${encodeURIComponent(q)}&i=${r.index}&t=${encodeURIComponent(r.title)}${modeParam(mode)}">
         <span class="title">${esc(r.title)}</span>
         <span class="meta" data-meta>${r.title_known ? "" : "Only result"}</span>
+        <span data-lib></span>
       </a>
       ${can.download() ? `<label class="pick" aria-label="Select ${esc(r.title)}"><input type="checkbox" value="${r.index}"></label>` : ""}
     </div>`).join("")}</div>`;
+
+  libraryMatch(results.map((r) => ({ id: r.index, titles: [r.title] }))).then((matches) => {
+    for (const [index, m] of Object.entries(matches)) {
+      const slot = $(`.result[data-index="${index}"] [data-lib]`);
+      if (slot) slot.outerHTML = libraryBadge(m);
+    }
+  });
 
   for (const thumb of $$(".thumb[data-title]")) {
     fetchMeta(thumb.dataset.title).then((m) => {
@@ -349,11 +533,12 @@ async function searchView() {
   bar.querySelector("#sel-clear").addEventListener("click", () => { selected.clear(); $$(".pick input").forEach((b) => (b.checked = false)); update(); });
   bar.querySelector("#sel-queue").addEventListener("click", () => {
     const picked = results.filter((r) => selected.has(r.index)).map((r) => ({ query: q, index: r.index, title: r.title }));
-    queueSheet(picked, dub);
+    queueSheet(picked, mode);
   });
 }
 
-async function queueSheet(picked, dub) {
+async function queueSheet(picked, mode) {
+  const dub = mode === "dub";
   const s = sheet(loading("Reading episode lists…"));
   const box = s.querySelector(".sheet");
   let planned, locs, settings;
@@ -399,7 +584,7 @@ async function queueSheet(picked, dub) {
     })).filter((e) => e.episodes.length);
     try {
       const r = await busy(ev.submitter, () => api("/api/queue", { method: "POST", body: {
-        series_name: f.series_name, location_id: Number(f.location_id), mode: dub ? "dub" : "sub", quality: f.quality, entries,
+        series_name: f.series_name, location_id: Number(f.location_id), mode, quality: f.quality, entries,
       } }));
       s.remove();
       queuedToast(r);
@@ -430,7 +615,8 @@ function qualitySelect(current) {
 
 async function showView() {
   const p = params();
-  const dub = wantDub();
+  const mode = wantMode();
+  const dub = mode === "dub";
   view.innerHTML = loading("Loading seasons and episodes…");
   let data, locs, settings;
   try {
@@ -453,13 +639,14 @@ async function showView() {
   let locationId = locs.locations.find((l) => l.is_default)?.id;
 
   view.innerHTML = `
-    <a href="#/search?q=${encodeURIComponent(p.q)}${dubParam(dub)}" class="small">← Results</a>
+    <a href="#/search?q=${encodeURIComponent(p.q)}${modeParam(mode)}" class="small">← Results</a>
     <div class="hero" style="margin-top:.75rem">
       <div class="art" style="background-image:url('${esc(meta?.cover || "")}')"></div>
       <div>
         <h1>${esc(data.series_name)}</h1>
         <div class="muted small">${esc([meta?.format?.replace("_", " "), meta?.year, meta?.status?.toLowerCase().replace("_", " "), meta?.score && `${meta.score}%`].filter(Boolean).join(" · "))}</div>
-        <div class="genres">${(meta?.genres || []).slice(0, 5).map((g) => `<span class="pill">${esc(g)}</span>`).join("")}<span id="jf-badge"></span></div>
+        <div class="genres">${(meta?.genres || []).slice(0, 5).map((g) => `<span class="pill">${esc(g)}</span>`).join("")}</div>
+        <div id="inlib"></div>
         ${meta?.description ? `<p class="synopsis clamp" id="syn">${esc(meta.description.replace(/<[^>]+>/g, ""))}</p>` : ""}
       </div>
     </div>
@@ -470,10 +657,7 @@ async function showView() {
         <label class="field"><span>Download to</span>${locationSelect(locs.locations, locationId)}</label>
       </div>
       <div class="row">
-        <div class="segmented" role="group" aria-label="Audio">
-          <button type="button" data-dub="0" class="${dub ? "" : "on"}">Sub</button>
-          <button type="button" data-dub="1" class="${dub ? "on" : ""}">Dub</button>
-        </div>
+        ${modeToggle(mode)}
         <div class="grow" style="min-width:140px">${qualitySelect(settings.quality)}</div>
       </div>
     </div>
@@ -485,12 +669,16 @@ async function showView() {
     <div class="pad-actionbar"></div>`;
 
   $("#syn")?.addEventListener("click", (e) => e.target.classList.toggle("clamp"));
-  for (const b of $$("[data-dub]")) {
-    b.addEventListener("click", () => { location.hash = `#/show?q=${encodeURIComponent(p.q)}&i=${p.i}&t=${encodeURIComponent(p.t)}${dubParam(b.dataset.dub === "1")}`; });
+  for (const b of $$("[data-mode]")) {
+    b.addEventListener("click", () => { location.hash = `#/show?q=${encodeURIComponent(p.q)}&i=${p.i}&t=${encodeURIComponent(p.t)}${modeParam(b.dataset.mode)}`; });
   }
-  api(`/api/mediaserver/series?name=${encodeURIComponent(data.series_name)}`).then((r) => {
-    if (r.exists) $("#jf-badge").innerHTML = `<span class="pill ok">In ${serverName(settings.media_server)}</span>`;
-  }).catch(() => {});
+  libraryMatch([{ id: "series", titles: [data.series_name, p.t, ...(meta?.names || []), ...seasons.map((x) => x.title)] }]).then((matches) => {
+    const m = matches.series;
+    if (!m || !$("#inlib")) return;
+    const { seasons: have, where } = librarySummary(m);
+    $("#inlib").innerHTML = `<div class="libbox">✓ <b>In your library</b>${where ? ` <span class="muted">${esc(where)}</span>` : ""}
+      ${have ? `<div class="small">${esc(have)}</div>` : ""}</div>`;
+  });
 
   const bar = document.createElement("div");
   bar.className = "actionbar";
@@ -610,7 +798,7 @@ async function showView() {
     }));
     try {
       const r = await busy(ev.currentTarget, () => api("/api/queue", { method: "POST", body: {
-        series_name: $("#series").value, location_id: locationId, mode: dub ? "dub" : "sub",
+        series_name: $("#series").value, location_id: locationId, mode,
         quality: $("select[name=quality]").value, entries,
       } }));
       queuedToast(r);
@@ -628,11 +816,11 @@ async function showView() {
   const markFollowed = async () => {
     if (!followBtn) return;
     const { follows } = await api("/api/follows").catch(() => ({ follows: [] }));
-    const mode = dub ? "dub" : "sub";
     const mine = follows.filter((f) => f.mode === mode && seasons.some((x) => x.title === f.title));
     if (mine.length) {
       followBtn.textContent = "★ Following";
       followBtn.classList.add("following");
+      followBtn.dataset.tip = "You follow this show, so new episodes download by themselves. Tap to manage it under Downloads → Following";
       followBtn.onclick = () => { location.hash = "#/downloads?tab=following"; };
     }
   };
@@ -652,7 +840,7 @@ async function showView() {
           <label class="check"><input type="radio" name="backfill" value="season"> Download what's missing from the followed season</label>
           <label class="check"><input type="radio" name="backfill" value="none"> Skip them, only new episodes from now on</label>
         </div>
-        <p class="hint">Saves to ${esc($("select[name=location_id]")?.selectedOptions[0]?.textContent || "the default location")} as ${dub ? "dub" : "sub"}, ${esc($("select[name=quality]").selectedOptions[0].textContent.toLowerCase())}.</p>
+        <p class="hint">Saves to ${esc($("select[name=location_id]")?.selectedOptions[0]?.textContent || "the default location")} as ${MODE_LABEL[mode]}, ${esc($("select[name=quality]").selectedOptions[0].textContent.toLowerCase())}.</p>
         <div class="row end"><button type="button" class="ghost" data-close>Cancel</button><button class="primary" type="submit">Follow</button></div>
       </form>`);
     sh.querySelector("[data-close]").onclick = () => sh.remove();
@@ -661,7 +849,7 @@ async function showView() {
       const f = formData(ev.target);
       const backfill = ev.target.querySelector("input[name=backfill]:checked").value;
       const chosen = seasons[Number(f.season)];
-      const common = { series_name: $("#series").value, location_id: locationId, mode: dub ? "dub" : "sub", quality: $("select[name=quality]").value };
+      const common = { series_name: $("#series").value, location_id: locationId, mode, quality: $("select[name=quality]").value };
       try {
         await busy(ev.submitter, async () => {
           await api("/api/follows", { method: "POST", body: { ...common, new_seasons: f.new_seasons, only_new: backfill === "none",
@@ -758,7 +946,7 @@ async function renderFollowing() {
           <div class="muted small">${esc(f.title)}</div>
           ${next ? `<div class="small" style="margin-top:.25rem">${esc(next)}</div>` : ""}
           <div class="muted small">${f.last_checked ? `Checked ${relTime(f.last_checked)}: ${esc(f.last_result)}` : "First check is starting…"}${f.status === "active" && f.next_check ? ` · next check ${relTime(f.next_check)}` : ""}</div>
-          <div class="muted small">${esc(f.mode)} · ${esc(f.quality)} · ${esc(f.location)}${f.new_seasons ? " · new seasons too" : ""}${f.owner ? ` · by ${esc(f.owner)}` : ""}</div>
+          <div class="muted small">${esc(MODE_LABEL[f.mode] || f.mode)} · ${esc(f.quality)} · ${esc(f.location)}${f.new_seasons ? " · new seasons too" : ""}${f.owner ? ` · by ${esc(f.owner)}` : ""}</div>
         </div>
         <span class="pill ${cls}">${label}</span>
       </div>
@@ -814,7 +1002,7 @@ async function renderQueue() {
         <div class="grow">
           <b>${esc(b.series_name)} · S${String(b.season).padStart(2, "0")}</b>
           <div class="muted small">${esc(b.title)}</div>
-          <div class="muted small">${b.counts.done}/${total} episodes · ${esc(b.mode)} · ${esc(b.location || "?")}${b.owner ? ` · by ${esc(b.owner)}` : ""}${b.follow_id ? ` · <span class="pill accent">auto</span>` : ""}</div>
+          <div class="muted small">${b.counts.done}/${total} episodes · ${esc(MODE_LABEL[b.mode] || b.mode)} · ${esc(b.location || "?")}${b.owner ? ` · by ${esc(b.owner)}` : ""}${b.follow_id ? ` · <span class="pill accent">auto</span>` : ""}</div>
           <div class="progress ${b.active ? "" : "done"}" style="margin-top:.4rem"><i style="width:${progress.toFixed(1)}%"></i></div>
         </div>
         ${state}
@@ -1177,8 +1365,14 @@ async function locationsPanel(container, { onChange, wizard = false } = {}) {
 function defaultsForm(s) {
   return `
     <div class="grid2">
-      <label class="field"><span>Sub or dub</span><select name="mode"><option value="sub" ${s.mode === "sub" ? "selected" : ""}>Sub (Japanese audio, subtitles)</option><option value="dub" ${s.mode === "dub" ? "selected" : ""}>Dub (English audio)</option></select>
-        <div class="hint">What search and show pages start with. You can still switch per download.</div></label>
+      <label class="field"><span>Sub or dub</span><select name="mode">
+        <option value="sub" ${s.mode === "sub" ? "selected" : ""}>Sub (Japanese audio, subtitles)</option>
+        <option value="dub" ${s.mode === "dub" ? "selected" : ""}>Dub (English audio)</option>
+        <option value="both" ${s.mode === "both" ? "selected" : ""}>Sub + Dub (both audio tracks in one file)</option></select>
+        <div class="hint">What search and show pages start with. You can still switch per download. Sub + Dub lets you switch language in Jellyfin/Plex's audio menu.</div></label>
+      <label class="field"><span>With Sub + Dub, play first</span><select name="both_default">
+        <option value="sub" ${s.both_default !== "dub" ? "selected" : ""}>Japanese audio (with English subtitles)</option>
+        <option value="dub" ${s.both_default === "dub" ? "selected" : ""}>English audio</option></select></label>
       <label class="field"><span>Quality</span>${qualitySelect(s.quality)}</label>
       <label class="field"><span>Downloads at once</span><select name="concurrency">${[1, 2, 3, 4, 5].map((n) => `<option ${n === s.concurrency ? "selected" : ""}>${n}</option>`).join("")}</select></label>
       <label class="field"><span>File naming</span><select name="naming">

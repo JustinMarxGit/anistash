@@ -90,6 +90,22 @@ async def libraries(kind: str | None = None, url: str | None = None, token: str 
     raise MediaServerError("Choose Jellyfin or Plex first.")
 
 
+async def library_series(library_id: str) -> list[dict]:
+    """Every series in a library: [{name, original_name, episodes}]."""
+    kind = db.get_setting("media_server")
+    if kind == "jellyfin":
+        resp = await _request("GET", "/Items", params={
+            "ParentId": library_id, "IncludeItemTypes": "Series", "Recursive": "true",
+            "Fields": "OriginalTitle,RecursiveItemCount", "EnableImages": "false", "Limit": 5000})
+        return [{"name": i.get("Name", ""), "original_name": i.get("OriginalTitle", ""),
+                 "episodes": i.get("RecursiveItemCount")} for i in resp.json().get("Items", [])]
+    if kind == "plex":
+        resp = await _request("GET", f"/library/sections/{library_id}/all", params={"type": 2})
+        return [{"name": m.get("title", ""), "original_name": m.get("originalTitle", ""), "episodes": m.get("leafCount")}
+                for m in resp.json().get("MediaContainer", {}).get("Metadata") or []]
+    return []
+
+
 async def find_series(name: str) -> bool:
     s = db.get_settings()
     wanted = name.lower()

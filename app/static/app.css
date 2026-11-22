@@ -303,3 +303,14 @@ code { font-family: ui-monospace, monospace; font-size: .85em; }
 select.small { min-height: 36px; padding: 0 .5rem; font-size: .88rem; }
 
 button.following { color: var(--accent); border-color: var(--accent); }
+
+.poster .art { position: relative; }
+.inlib { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: var(--ok); color: #fff; font-size: .72rem; font-weight: 700; white-space: nowrap; }
+.poster .inlib { position: absolute; left: 6px; bottom: 6px; box-shadow: 0 1px 4px rgb(0 0 0 / 40%); }
+.result .inlib { align-self: flex-start; margin-top: .15rem; }
+.libbox { margin: .5rem 0; padding: .55rem .8rem; border-radius: 10px; background: var(--ok-soft); color: var(--ok); font-size: .92rem; }
+.libbox .muted, .libbox .small { color: var(--text); opacity: .8; }
+
+.tip { position: fixed; z-index: 60; max-width: min(280px, calc(100vw - 16px)); padding: .45rem .65rem; border-radius: 8px;
+  background: var(--text); color: var(--bg); font-size: .82rem; line-height: 1.35; font-weight: 500;
+  box-shadow: var(--shadow); pointer-events: none; }

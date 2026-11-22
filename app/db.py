@@ -133,6 +133,7 @@ DEFAULT_SETTINGS = {
     "setup_complete": False,
     "setup_step": 0,
     "mode": "sub",
+    "both_default": "sub",   # with sub+dub files: which audio plays first
     "quality": "best",
     "concurrency": 1,
     "naming": "server",

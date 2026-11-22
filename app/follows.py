@@ -68,8 +68,8 @@ async def create(entry: dict, series_name: str, location_id: int, mode: str, qua
     series_name = series_name.strip()
     if not series_name:
         raise FollowError("Series name is required.")
-    if mode not in ("sub", "dub"):
-        raise FollowError("Mode must be sub or dub.")
+    if mode not in ("sub", "dub", "both"):
+        raise FollowError("Mode must be sub, dub or both.")
     locations.get(location_id)
     existing = db.query_one("SELECT id FROM follows WHERE series_name = ? AND title = ? AND mode = ?",
                             (series_name, entry["title"], mode))

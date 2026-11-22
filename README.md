@@ -8,6 +8,9 @@ AniStash runs in its own Proxmox LXC, created with one command on the Proxmox ho
 
 - **Browse and search**: trending and seasonal anime (posters and synopses from AniList), and ani-cli search with sub/dub.
 - **Seasons**: a show's seasons are grouped automatically, including "Season 3 Part 2" and "Final Season". Queue every season at once, one season, or specific episodes (`1-5, 8, 12-`).
+- **Sub, dub, or both**: download either, or **Sub + Dub** to get one file with both Japanese and English audio (labelled), so you can switch language in Jellyfin or Plex's audio menu. You choose which plays first.
+- **Already in your library**: posters, search results and show pages show **✓ In library**, with seasons and episode counts. This covers your download folders and your Jellyfin/Plex anime library.
+- **Explains itself**: hover over any button, or long-press it on a phone, to see what it does.
 - **Follow shows**: tap *Follow* on a show and every new episode downloads by itself as it comes out, including new seasons. Checks are timed around each broadcast using AniList's airing schedule.
 - **Highest quality with fallback**: each episode downloads at the best quality offered. If that download fails or comes out broken, AniStash tries the next quality down, then the next.
 - **Files Jellyfin and Plex play directly**: every download is checked with ffprobe and remuxed (no re-encode) to a clean MP4 with faststart. Subtitles are converted to `.en.srt`. Layout: `Show (2013)/Season 01/Show (2013) - S01E01.mp4`.
@@ -128,6 +131,7 @@ Settings, locations and the queue survive updates. The web UI port is set in `/e
 - **A location shows "Not mounted"**: click *Test*, which remounts it and shows the error from the NAS. Check that the share allows the user you entered to write.
 - **A download shows "scan failed"**: the file is downloaded fine; only the Jellyfin/Plex notification failed. Check the URL, key or token and the chosen library under Settings → Media server.
 
+- **A Sub + Dub episode only has Japanese audio**: when the dub can't be added (not uploaded yet, a different length, or the site serving the Japanese audio again), the episode is still saved with Japanese audio, and the queue says why.
 - **A dub download has Japanese audio**: AniStash asks ani-cli for the dub correctly (`--dub`), but with ani-cli 5.1.5 its current anime site sometimes hands back the sub stream for dubs. Run *Update ani-cli* under Settings → System; once ani-cli fixes it upstream, dubs come through without any change in AniStash.
 
 ## Development

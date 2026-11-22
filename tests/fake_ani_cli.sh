@@ -4,14 +4,17 @@
 #   FAKE_VIDEO          a real short mp4 copied as the "download"
 #   FAKE_FAIL="1080"    qualities whose download fails
 #   FAKE_BROKEN="720"   qualities that produce a corrupt file
-download=0 index="" episode="" query="" quality=best
+#   FAKE_DUB_VIDEO      mp4 used for --dub downloads (different audio)
+#   FAKE_DUB_SAME=1     --dub returns the sub's video (what the site does today)
+#   FAKE_NO_DUB=1       --dub downloads fail with "No sources found for dub"
+download=0 index="" episode="" query="" quality=best dubbed=0
 while [ $# -gt 0 ]; do
     case "$1" in
         -d) download=1 ;;
         -S) index="$2"; shift ;;
         -e) episode="$2"; shift ;;
         -q) quality="$2"; shift ;;
-        --dub) ;;
+        --dub) dubbed=1 ;;
         -V) echo "9.9.9"; exit 0 ;;
         *) query="$query $1" ;;
     esac
@@ -40,7 +43,9 @@ if [ "$download" = 1 ]; then
     for q in $FAKE_FAIL; do [ "$q" = "$quality" ] && { printf 'ERROR: fragment 3 not found\n'; exit 1; }; done
     printf '[download]  50.0%% of ~ 10.00MiB at 1.00MiB/s ETA 00:05\r[download] 100%% of 10.00MiB\n'
     out="$ANI_CLI_DOWNLOAD_DIR/Show Episode $episode.mp4"
-    cp "$FAKE_VIDEO" "$out"
+    # A dub has different audio, unless the test wants the site's "same audio" behaviour
+    if [ "$dubbed" = 1 ] && [ -n "$FAKE_DUB_VIDEO" ] && [ -z "$FAKE_DUB_SAME" ]; then cp "$FAKE_DUB_VIDEO" "$out"; else cp "$FAKE_VIDEO" "$out"; fi
+    [ "$dubbed" = 1 ] && [ -n "$FAKE_NO_DUB" ] && { printf 'No sources found for dub!\n'; exit 1; }
     for q in $FAKE_BROKEN; do [ "$q" = "$quality" ] && printf 'not a video' >"$out"; done
     printf 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello\n' >"$ANI_CLI_DOWNLOAD_DIR/Show Episode $episode.vtt"
     exit 0
