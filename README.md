@@ -76,6 +76,23 @@ The path is the same folder as Jellyfin or Plex sees it. For example, your NAS s
 - **Jellyfin API key:** Dashboard → API Keys → +
 - **Plex token:** in Plex Web, open any item → ⋯ → Get Info → View XML, and copy the `X-Plex-Token` value from the address bar.
 
+## Recommendations
+
+Browse opens with two lists of shows that are airing now.
+
+- **Best this season** combines fan ratings from **MyAnimeList**, **AniList** and **Kitsu**, plus what people are watching on **hianime**, the site ani-cli downloads from.
+  - **How the rating works:** each site's score is first pulled toward an average according to how many people rated the show, so a few dozen perfect scores can't beat a show thousands love. The sites are then weighted MAL 45%, AniList 40%, Kitsu 15%.
+  - **Ranking:** popularity on hianime (Trending, Top Airing, most watched today) and AniList's trending break ties.
+  - **Each poster** shows the combined rating; hover over it to see each site's score. A **Dub** tag means an English dub is out.
+- **Picked for you** looks at what *you* follow and queued, and what's in the library.
+  - It uses AniList's fan recommendations both ways: "fans of a show you have like this" and "fans of this like a show you have". Shared genres also count, and weak or decades-old shows are filtered out.
+  - Each pick says why: *Because you have Blue Box*, or *New season of Frieren* for a show you have only earlier seasons of.
+  - Shows you already have or follow are left out.
+
+Every site is optional. If one is down, the others still rank the shows, and the page says which one is missing. Scores are cached for 6 hours and hianime's lists for 1 hour, and the ranking is rebuilt in the background, so Browse doesn't wait for the sites.
+
+**MyAnimeList Client ID (optional, admins):** MAL's official API needs a free Client ID. Create one at myanimelist.net → *Account settings → API → Create ID* (App type: *other*) and paste it under **Settings → Ratings**. It's stored encrypted. Without one, AniStash uses Jikan, a public MAL mirror, whenever it's reachable.
+
 ## Following shows
 
 On a show page, **☆ Follow** keeps that show up to date:

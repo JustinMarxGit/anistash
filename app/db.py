@@ -153,6 +153,7 @@ DEFAULT_SETTINGS = {
     "media_refresh": "season",
     "media_library_id": "",
     "media_library_name": "",
+    "mal_client_id": "",     # optional MyAnimeList API Client ID (encrypted)
 }
 
 

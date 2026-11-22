@@ -323,6 +323,9 @@ const TIPS = [
   ['#ms-test', "Check the address and key work, and load your libraries"],
   ['#update-tools', "Get the newest ani-cli and yt-dlp. This fixes most search and download problems"],
   ['#update-app', "Install the newest AniStash. Your settings, users and downloads stay"],
+  ['[data-shelf="-1"]', "Scroll this row back"],
+  ['[data-shelf="1"]', "Scroll this row to see more"],
+  ['#mal-clear', "Forget the saved MyAnimeList Client ID (Jikan is used instead)"],
   ['#check-updates', "Ask GitHub now whether a newer AniStash is out (normally checked every few hours)"],
   ['#auto-update', "Install new AniStash versions by themselves, while nothing is downloading"],
   ['#logout', "Sign out on this device"],
@@ -444,6 +447,10 @@ function tourSteps() {
       text: "What's trending and what's airing this season. Shows you already have get a green ✓ In library badge." },
     { route: "#/", el: "#langswitch", title: "English or Japanese titles",
       text: "Switch every title between English and Japanese. Search finds a show by either name, whichever you pick." },
+    { route: "#/", el: "#best", title: "Best this season",
+      text: "The best shows airing now, ranked by fan ratings from MyAnimeList, AniList and Kitsu, and by what people are watching. The number on each poster is the combined rating; hover over it to see where it comes from." },
+    { route: "#/", el: "#foryou, #foryou-hint", title: "Picked for you",
+      text: "Shows airing now that are close to what you already have and follow, with the reason underneath. The more you download and follow, the better it gets." },
     { route: "#/", el: ".poster", title: "Found something?",
       text: "Tap a poster to look it up and see its seasons and episodes." },
     { route: "#/search", el: "#search", title: "Search",
@@ -732,12 +739,27 @@ function showTitle(m) {
 
 function posterCard(m, k, { rank = 0 } = {}) {
   const sub = [m.format?.replace("_", " "), m.year, m.episodes && `${m.episodes} eps`].filter(Boolean).join(" · ");
+  const score = m.rating ? `<span class="score" data-tip="${esc(ratingTip(m))}">${icon("star")}${(m.rating.combined / 10).toFixed(1)}</span>` : "";
+  const dub = m.available?.dub ? `<span class="dubtag" data-tip="${esc(`An English dub is out: ${m.available.dub} episode${m.available.dub === 1 ? "" : "s"} so far`)}">Dub</span>` : "";
   return `<a class="poster rise" style="--i:${k}" href="#/search?q=${encodeURIComponent(m.english || m.romaji || m.title)}" data-card="${m.id}">
       ${rank ? `<span class="rank" aria-hidden="true">${rank}</span>` : ""}
-      <div class="art" data-bg="${esc(m.cover || "")}"><span data-lib></span></div>
+      <div class="art" data-bg="${esc(m.cover || "")}">${score}${dub}<span data-lib></span></div>
       <div class="name">${esc(showTitle(m))}</div>
       <div class="sub">${esc(sub)}</div>
+      ${m.reason ? `<div class="reason">${esc(m.reason)}</div>` : ""}
     </a>`;
+}
+
+// "8.7": what it's made of, in plain words
+function ratingTip(m) {
+  const r = m.rating, parts = [];
+  if (r.mal) parts.push(`MyAnimeList ${(r.mal / 10).toFixed(2)}`);
+  if (r.anilist) parts.push(`AniList ${Math.round(r.anilist)}%`);
+  if (r.kitsu) parts.push(`Kitsu ${Math.round(r.kitsu)}%`);
+  const ranks = m.available?.ranks || {};
+  const hot = ranks.trending ? `#${ranks.trending} trending on hianime` : ranks.top10 ? `#${ranks.top10} most watched on hianime today`
+    : ranks.airing ? `#${ranks.airing} top airing on hianime` : "";
+  return `Rated ${(r.combined / 10).toFixed(1)} out of 10 by fans: ${parts.join(" · ")}${hot ? `. Right now: ${hot}` : ""}`;
 }
 
 function markLibrary(el, items) {
@@ -759,8 +781,13 @@ async function browseView() {
     <section class="feature" id="feature"><div class="bg skel"></div></section>
     <form class="searchbar" id="quick">${icon("search", "lead")}
       <input type="search" id="q" placeholder="Search anime by English or Japanese name" enterkeyhint="search" aria-label="Search anime"></form>
-    <div class="section-head"><h2>Trending now</h2>
-      <div class="shelf-nav"><button class="small icon" data-shelf="-1" aria-label="Scroll left">${icon("back")}</button><button class="small icon" data-shelf="1" aria-label="Scroll right">${icon("arrow")}</button></div></div>
+    <div class="section-head"><h2>Best this season</h2>${shelfNav("best")}</div>
+    <p class="hint shelf-hint" id="best-sources"></p>
+    <div class="shelf ranked" id="best">${skeletonPosters(6)}</div>
+    <div class="section-head"><h2>Picked for you</h2>${shelfNav("foryou")}</div>
+    <p class="hint shelf-hint" id="foryou-hint"></p>
+    <div class="shelf" id="foryou">${skeletonPosters(6)}</div>
+    <div class="section-head"><h2>Trending now</h2>${shelfNav("trending")}</div>
     <div class="shelf ranked" id="trending">${skeletonPosters(8)}</div>
     <div class="section-head"><h2>This season</h2></div>
     <div class="posters" id="seasonal">${skeletonPosters(12)}</div>`;
@@ -770,11 +797,40 @@ async function browseView() {
     if (value) location.hash = `#/search?q=${encodeURIComponent(value)}`;
   });
   for (const b of $$("[data-shelf]")) {
-    b.addEventListener("click", () => { const shelf = $("#trending"); shelf.scrollBy({ left: Number(b.dataset.shelf) * shelf.clientWidth * .8, behavior: "smooth" }); });
+    b.addEventListener("click", () => { const shelf = $(`#${b.dataset.for}`); shelf.scrollBy({ left: Number(b.dataset.shelf) * shelf.clientWidth * .8, behavior: "smooth" }); });
   }
 
   const seq = routeSeq;
-  const trending = browseList("trending"), seasonal = browseList("seasonal");
+  const trending = browseList("/api/browse/trending"), seasonal = browseList("/api/browse/seasonal");
+  const best = browseList("/api/recommend/season"), forYou = browseList("/api/recommend/for-you");
+
+  best.then(({ items, sources }) => {
+    const shelf = $("#best");
+    if (!shelf) return;
+    if (!items.length) { shelf.outerHTML = `<p class="muted">Couldn't reach the rating sites right now.</p>`; return; }
+    shelf.innerHTML = items.map((m, k) => posterCard(m, k, { rank: k + 1 })).join("");
+    lazyImages(shelf, shelf);
+    const used = Object.entries(sources).filter(([, ok]) => ok).map(([k]) => SOURCE_LABEL[k]);
+    const down = Object.entries(sources).filter(([, ok]) => !ok).map(([k]) => SOURCE_LABEL[k]);
+    $("#best-sources").textContent = `Ranked by fan ratings and what people are watching: ${used.join(", ")}`
+      + (down.length ? ` (${down.join(", ")} unavailable right now)` : "");
+  }).catch((e) => { const el = $("#best"); if (el) el.outerHTML = `<p class="muted">${esc(e.message)}</p>`; });
+
+  forYou.then(({ items, based_on: basedOn }) => {
+    const shelf = $("#foryou");
+    if (!shelf) return;
+    if (!items.length) {
+      $("#foryou-hint").textContent = basedOn
+        ? "Nothing airing right now is close to your shows. Check back next season."
+        : "Download or follow a few shows and AniStash will suggest similar ones that are airing now.";
+      shelf.remove();
+      return;
+    }
+    $("#foryou-hint").textContent = `Airing now and close to the ${basedOn} show${basedOn === 1 ? "" : "s"} you have and follow.`;
+    shelf.innerHTML = items.map((m, k) => posterCard(m, k)).join("");
+    lazyImages(shelf, shelf);
+  }).catch(() => { $("#foryou")?.remove(); });
+
   trending.then(({ items, error }) => {
     const shelf = $("#trending"), feature = $("#feature");
     if (!shelf) return;
@@ -804,21 +860,25 @@ async function browseView() {
   }).catch((e) => { const el = $("#seasonal"); if (el) el.outerHTML = `<p class="muted">${esc(e.message)}</p>`; });
 
   // One library check for both lists
-  const lists = await Promise.all([trending, seasonal].map((p) => p.then((d) => d.items).catch(() => [])));
+  const lists = await Promise.all([best, trending, seasonal].map((p) => p.then((d) => d.items).catch(() => [])));
   const unique = [...new Map(lists.flat().map((m) => [m.id, m])).values()];
   if (seq === routeSeq) markLibrary(view, unique);
 }
 
-// Trending and seasonal lists are kept for 5 minutes, so going back to Browse is instant
+// Browse's lists are kept for 5 minutes, so going back to Browse is instant
 const browseCache = new Map();
-function browseList(kind) {
-  const hit = browseCache.get(kind);
+function browseList(path) {
+  const hit = browseCache.get(path);
   if (hit && Date.now() - hit.at < 300000) return hit.promise;
-  const promise = api(`/api/browse/${kind}`);
-  browseCache.set(kind, { at: Date.now(), promise });
-  promise.then((d) => { if (!d.items.length) browseCache.delete(kind); }, () => browseCache.delete(kind));
+  const promise = api(path);
+  browseCache.set(path, { at: Date.now(), promise });
+  promise.then((d) => { if (!d.items.length) browseCache.delete(path); }, () => browseCache.delete(path));
   return promise;
 }
+
+const SOURCE_LABEL = { anilist: "AniList", mal: "MyAnimeList", kitsu: "Kitsu", hianime: "hianime" };
+
+const shelfNav = (id) => `<div class="shelf-nav"><button class="small icon" data-shelf="-1" data-for="${id}" aria-label="Scroll left">${icon("back")}</button><button class="small icon" data-shelf="1" data-for="${id}" aria-label="Scroll right">${icon("arrow")}</button></div>`;
 
 // Search -------------------------------------------------------------------------------
 
@@ -2082,6 +2142,16 @@ async function settingsView() {
     <form class="card" id="ms"><h2>Media server</h2>${mediaServerForm(s)}
       <div class="row end"><button type="button" id="ms-test">Test</button><button class="primary" type="submit">Save</button></div></form>
 
+    <form class="card" id="mal"><h2>Ratings</h2>
+      <p class="muted small">Best this season combines fan ratings from MyAnimeList, AniList and Kitsu with what's popular on hianime.</p>
+      <label class="field"><span>MyAnimeList Client ID (optional)</span>
+        <input type="text" name="mal_client_id" autocomplete="off" spellcheck="false"
+          placeholder="${s.mal_client_id_set ? "Saved. Paste a new one to replace it" : "32 letters and numbers"}"></label>
+      <p class="hint">Makes MyAnimeList scores reliable. It's free: sign in at myanimelist.net, open <i>Account settings → API → Create ID</i>
+        (App type: <i>other</i>), then paste the Client ID here. Without one, AniStash uses Jikan, a public MyAnimeList mirror, when it's up.</p>
+      <div class="row end">${s.mal_client_id_set ? `<button type="button" class="small" id="mal-clear">Remove</button>` : ""}
+        <button class="primary" type="submit">Save</button></div></form>
+
     ${accountCard()}
 
     <div class="card"><h2>Security log</h2>
@@ -2122,6 +2192,21 @@ async function settingsView() {
     catch (err) { toast(err.message, true); }
   });
   bindMediaServerForm($("#ms"));
+  const saveMal = async (value, button) => {
+    try {
+      prefs = await busy(button, () => api("/api/settings", { method: "PUT", body: { mal_client_id: value } }));
+      browseCache.delete("/api/recommend/season");
+      browseCache.delete("/api/recommend/for-you");
+      toast(value ? "MyAnimeList Client ID saved" : "MyAnimeList Client ID removed");
+      route();
+    } catch (err) { toast(err.message, true); }
+  };
+  $("#mal").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const value = e.target.mal_client_id.value.trim();
+    if (value) saveMal(value, e.submitter);
+  });
+  $("#mal-clear")?.addEventListener("click", (e) => saveMal("", e.currentTarget));
   $("#ms").addEventListener("submit", async (e) => {
     e.preventDefault();
     try { await busy(e.submitter, () => saveMediaServer(e.target)); toast("Media server settings saved"); e.target.token.value = ""; }

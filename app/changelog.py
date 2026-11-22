@@ -5,6 +5,18 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "0.9.0",
+        "title": "Better recommendations",
+        "items": [
+            "Best this season ranks what's airing now by fan ratings from MyAnimeList, AniList and Kitsu, and by "
+            "what people are watching on hianime. Hover over the number on a poster to see where it comes from.",
+            "Picked for you suggests airing shows close to what you have and follow, and says why "
+            "(\"Because you have Blue Box\", \"New season of …\").",
+            "Posters show a Dub tag when an English dub is out.",
+            "Admins can add a free MyAnimeList Client ID under Settings → Ratings for more reliable MAL scores.",
+        ],
+    },
+    {
         "version": "0.8.1",
         "title": "Updating from the web page",
         "items": [

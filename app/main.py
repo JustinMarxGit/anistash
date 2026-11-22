@@ -18,7 +18,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.middleware.gzip import GZipMiddleware
 
 from . import (anicli, anilist, auth, changelog, config, db, follows, jobs, library, locations, mediaserver, net,
-               setup, shows, updates)
+               recommend, setup, shows, updates)
 from .naming import base_title, number_seasons
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -28,7 +28,8 @@ log = logging.getLogger("anistash")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init()
-    tasks = [asyncio.create_task(job()) for job in (jobs.worker, follows.scheduler, updates.scheduler, housekeeping)]
+    tasks = [asyncio.create_task(job()) for job in (jobs.worker, follows.scheduler, updates.scheduler, housekeeping,
+                                                       recommend.keep_fresh)]
     yield
     for task in tasks:
         task.cancel()
@@ -386,6 +387,8 @@ async def get_settings(user=VIEWER):
 @app.put("/api/settings")
 async def put_settings(request: Request, data: dict = Body(...), user=ADMIN):
     result = setup.save_defaults(data)
+    if "mal_client_id" in data:
+        recommend.forget()
     auth.audit(user["username"], "settings_changed", ", ".join(sorted(data)), client_ip(request))
     return result
 
@@ -530,6 +533,18 @@ async def browse(kind: str, user=VIEWER):
     except Exception as exc:
         log.warning("AniList %s failed: %s", kind, exc)
         return {"items": [], "error": "Couldn't reach AniList."}
+
+
+@app.get("/api/recommend/season")
+async def recommend_season(user=VIEWER):
+    """The best shows airing now: MAL, AniList and Kitsu ratings combined, plus what's popular on hianime."""
+    return await recommend.season()
+
+
+@app.get("/api/recommend/for-you")
+async def recommend_for_you(user=VIEWER):
+    """Airing shows picked from what this person follows, queued and has in the library."""
+    return await recommend.for_you(user["id"])
 
 
 @app.get("/api/search")

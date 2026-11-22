@@ -33,7 +33,7 @@ def isolated(tmp_path, monkeypatch, fake_video, fake_dub_video):
     """Each test gets its own data dir and the fake ani-cli."""
     import asyncio
 
-    from app import anicli, config, db, jobs
+    from app import anicli, config, db, jobs, library, recommend
 
     fake = HERE / "fake_ani_cli.sh"
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
@@ -50,6 +50,8 @@ def isolated(tmp_path, monkeypatch, fake_video, fake_dub_video):
     monkeypatch.delenv("FAKE_BROKEN", raising=False)
     monkeypatch.delenv("FAKE_EPISODES", raising=False)
     anicli._cache.clear()
+    library.invalidate()  # in-memory caches would carry one test's data into the next
+    recommend.forget()
     monkeypatch.setattr(jobs, "_wake", asyncio.Event())  # each asyncio.run() is a new loop
     db.init()
     os.makedirs(tmp_path / "media", exist_ok=True)

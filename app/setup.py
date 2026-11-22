@@ -122,6 +122,12 @@ def save_defaults(data: dict) -> dict:
         if data["media_refresh"] not in REFRESH:
             raise SetupError("Scan timing must be season, episode or off.")
         values["media_refresh"] = data["media_refresh"]
+    if "mal_client_id" in data:
+        client_id = str(data["mal_client_id"] or "").strip()
+        if client_id and not re.fullmatch(r"[0-9a-f]{32}", client_id):
+            raise SetupError("A MyAnimeList Client ID is 32 letters and numbers (0-9, a-f).")
+        values["mal_client_id"] = vault.encrypt(client_id) if client_id else ""
+        db.execute("DELETE FROM cache WHERE key LIKE 'mal:%'")  # use the new ID straight away
     db.set_settings(**values)
     return public_settings()
 
@@ -155,6 +161,7 @@ def public_settings() -> dict:
         "skip_existing": s["skip_existing"], "media_server": s["media_server"], "media_url": s["media_url"],
         "media_token_set": bool(s["media_token"]), "media_refresh": s["media_refresh"],
         "media_library_id": s["media_library_id"], "media_library_name": s["media_library_name"],
+        "mal_client_id_set": bool(s["mal_client_id"]),
     }
 
 
