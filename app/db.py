@@ -2,6 +2,8 @@
 
 import json
 import sqlite3
+import threading
+import time
 from contextlib import contextmanager
 
 from . import config
@@ -154,27 +156,54 @@ DEFAULT_SETTINGS = {
 }
 
 
-def connect() -> sqlite3.Connection:
+# One long-lived connection per thread: opening a connection (and setting its pragmas) for
+# every statement cost more than most of the statements themselves.
+_local = threading.local()
+
+
+def _open() -> sqlite3.Connection:
     conn = sqlite3.connect(config.DB_PATH, timeout=30, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")  # safe with WAL; a crash can only lose the last commit
+    conn.execute("PRAGMA temp_store = MEMORY")
+    conn.execute("PRAGMA cache_size = -8000")    # 8 MB
+    conn.execute("PRAGMA mmap_size = 67108864")  # 64 MB
     return conn
+
+
+def connect() -> sqlite3.Connection:
+    """This thread's connection (reopened if the database path changed, as it does in tests)."""
+    conn = getattr(_local, "conn", None)
+    if conn is None or _local.path != config.DB_PATH:
+        conn = _open()
+        _local.conn, _local.path = conn, config.DB_PATH
+    return conn
+
+
+def close() -> None:
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        conn.close()
+        _local.conn = None
 
 
 @contextmanager
 def tx():
-    """A connection wrapped in a transaction that commits on success."""
+    """This thread's connection inside a transaction that commits on success. A tx() inside
+    another one joins the outer transaction."""
     conn = connect()
+    if conn.in_transaction:
+        yield conn
+        return
+    conn.execute("BEGIN IMMEDIATE")
     try:
-        conn.execute("BEGIN IMMEDIATE")
         yield conn
         conn.execute("COMMIT")
     except BaseException:
         conn.execute("ROLLBACK")
         raise
-    finally:
-        conn.close()
 
 
 # Columns added after the first release: (table, column, definition)
@@ -195,11 +224,25 @@ MIGRATIONS = [
 ]
 
 
+# Created after the migrations, since some index columns were added by them
+INDEXES = """
+CREATE INDEX IF NOT EXISTS items_batch ON items (batch_id, position);
+CREATE INDEX IF NOT EXISTS items_status ON items (status);
+CREATE INDEX IF NOT EXISTS batches_position ON batches (position);
+CREATE INDEX IF NOT EXISTS batches_follow ON batches (follow_id);
+CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user_id);
+CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions (expires_at);
+CREATE INDEX IF NOT EXISTS follows_due ON follows (status, next_check);
+CREATE INDEX IF NOT EXISTS cache_expiry ON cache (expires_at);
+"""
+
+
 def init() -> None:
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
     config.TMP_DIR.mkdir(parents=True, exist_ok=True)
     config.DATA_DIR.chmod(0o700)
-    conn = connect()
+    close()  # the schema may have been changed underneath an open connection
+    conn = _open()
     try:
         # Sessions from before token hashing stored raw tokens: drop them (everyone logs in again)
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(sessions)")}
@@ -209,6 +252,8 @@ def init() -> None:
         for table, column, definition in MIGRATIONS:
             if column not in {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        conn.executescript(INDEXES)
+        conn.execute("PRAGMA optimize")
     finally:
         conn.close()
     for path in (config.DB_PATH, config.DB_PATH.with_name(config.DB_PATH.name + "-wal"),
@@ -218,25 +263,22 @@ def init() -> None:
 
 
 def query(sql: str, params=()) -> list[sqlite3.Row]:
-    conn = connect()
-    try:
-        return conn.execute(sql, params).fetchall()
-    finally:
-        conn.close()
+    return connect().execute(sql, params).fetchall()
 
 
 def query_one(sql: str, params=()) -> sqlite3.Row | None:
-    rows = query(sql, params)
+    rows = connect().execute(sql, params).fetchall()  # fetchall finishes the statement, so no read stays open
     return rows[0] if rows else None
 
 
 def execute(sql: str, params=()) -> int:
     """Runs one statement and returns lastrowid."""
-    conn = connect()
-    try:
-        return conn.execute(sql, params).lastrowid
-    finally:
-        conn.close()
+    return connect().execute(sql, params).lastrowid
+
+
+def prune_cache() -> int:
+    """Drops expired cache rows (AniList and ani-cli answers)."""
+    return connect().execute("DELETE FROM cache WHERE expires_at < ?", (int(time.time()),)).rowcount
 
 
 def get_setting(key: str):

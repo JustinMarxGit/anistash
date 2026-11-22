@@ -8,6 +8,7 @@ change is fixed by `ani-cli -U` rather than by changing this code.
 """
 
 import asyncio
+import json
 import os
 import re
 import shutil
@@ -16,12 +17,16 @@ import tempfile
 import time
 from dataclasses import dataclass
 
-from . import config
+from . import config, db, net
 
 SEARCH_TIMEOUT = 60
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\r")
-_cache: dict[tuple, tuple[float, object]] = {}
+# Answers are kept in memory and in SQLite (so a restart doesn't forget them) for 10 minutes
+_cache: dict[str, tuple[float, object]] = {}
 _CACHE_TTL = 600
+# At most this many lookups at once, so a long series doesn't start a process per season
+MAX_LOOKUPS = 4
+_lookup_slots: tuple[asyncio.AbstractEventLoop, asyncio.Semaphore] | None = None
 
 
 class AniCliError(Exception):
@@ -80,7 +85,20 @@ def parse_capture(text: str) -> dict[str, list[str]]:
     return menus
 
 
+def _slots() -> asyncio.Semaphore:
+    global _lookup_slots
+    loop = asyncio.get_running_loop()
+    if _lookup_slots is None or _lookup_slots[0] is not loop:
+        _lookup_slots = (loop, asyncio.Semaphore(MAX_LOOKUPS))
+    return _lookup_slots[1]
+
+
 async def _run_capture(args: list[str], timeout: int = SEARCH_TIMEOUT) -> tuple[dict[str, list[str]], str]:
+    async with _slots():
+        return await _capture(args, timeout)
+
+
+async def _capture(args: list[str], timeout: int) -> tuple[dict[str, list[str]], str]:
     with tempfile.NamedTemporaryFile("r", prefix="anistash-capture-", delete=True) as capture:
         proc = await asyncio.create_subprocess_exec(
             config.ANI_CLI, *args,
@@ -108,16 +126,49 @@ def _kill(proc: asyncio.subprocess.Process) -> None:
         pass
 
 
-def _cached(key):
+def _key(*parts) -> str:
+    return "anicli:" + ":".join(str(p) for p in parts)
+
+
+def _cached(key: str):
+    now = time.time()
     hit = _cache.get(key)
-    if hit and hit[0] > time.time():
+    if hit and hit[0] > now:
         return hit[1]
+    row = db.query_one("SELECT value, expires_at FROM cache WHERE key = ? AND expires_at > ?", (key, int(now)))
+    if row:
+        value = json.loads(row["value"])
+        _cache[key] = (row["expires_at"], value)
+        return value
     return None
 
 
-def _store(key, value):
-    _cache[key] = (time.time() + _CACHE_TTL, value)
+def _store(key: str, value):
+    expires = time.time() + _CACHE_TTL
+    _cache[key] = (expires, value)
+    db.execute("INSERT OR REPLACE INTO cache (key, value, expires_at) VALUES (?, ?, ?)",
+               (key, json.dumps(value), int(expires)))
     return value
+
+
+def prune_cache() -> None:
+    now = time.time()
+    for key in [k for k, (expires, _) in _cache.items() if expires <= now]:
+        del _cache[key]
+
+
+def clear_cache() -> None:
+    _cache.clear()
+    db.execute("DELETE FROM cache WHERE key LIKE 'anicli:%'")
+
+
+# ani-cli puts the query into the URL as is, and the site rejects typographic punctuation
+# (AniList writes "Journey’s"), so those become their plain versions
+_PLAIN = str.maketrans({"’": "'", "‘": "'", "ʼ": "'", "“": '"', "”": '"', "–": "-", "—": "-", "…": "..."})
+
+
+def _clean(query: str) -> str:
+    return query.translate(_PLAIN).strip()
 
 
 def _mode_args(dub: bool) -> list[str]:
@@ -125,33 +176,42 @@ def _mode_args(dub: bool) -> list[str]:
 
 
 async def search(query: str, dub: bool = False, fresh: bool = False) -> list[Result]:
-    query = query.strip()
+    query = _clean(query)
     if not query:
         return []
-    key = ("search", query.lower(), dub)
-    if not fresh and (hit := _cached(key)) is not None:
-        return hit
+    key = _key("search", int(dub), query.lower())
+    if fresh or (hit := _cached(key)) is None:
+        hit = await net.once(("anicli", key), lambda: _search(query, dub, key))
+    return [Result(**r) for r in hit]
+
+
+async def _search(query: str, dub: bool, key: str) -> list[dict]:
     menus, output = await _run_capture([*_mode_args(dub), query])
     if "Select anime:" in menus:
         results = []
         for line in menus["Select anime:"]:
             number, _, title = line.partition(" ")
             if number.isdigit():
-                results.append(Result(int(number), title.strip()))
+                results.append(Result(int(number), title.strip()).__dict__)
         return _store(key, results)
     if "Select episode:" in menus or "Invalid episode selection" in output or "All links:" in output:
         # A single result skips the anime menu, so ani-cli never prints its title.
         # With no episodes out yet, ani-cli also skips the episode menu.
-        return _store(key, [Result(1, query, title_known=False)])
+        return _store(key, [Result(1, query, title_known=False).__dict__])
     if "No results found" in output:
         return _store(key, [])
     raise AniCliError(_friendly_error(output))
 
 
 async def episodes(query: str, index: int, dub: bool = False, fresh: bool = False) -> list[str]:
-    key = ("episodes", query.lower(), index, dub)
+    query = _clean(query)
+    key = _key("episodes", int(dub), index, query.lower())
     if not fresh and (hit := _cached(key)) is not None:
         return hit
+    return await net.once(("anicli", key), lambda: _episodes(query, index, dub, key))
+
+
+async def _episodes(query: str, index: int, dub: bool, key: str) -> list[str]:
     menus, output = await _run_capture([*_mode_args(dub), "-S", str(index), query])
     if "Select episode:" in menus:
         return _store(key, [line.split()[0] for line in menus["Select episode:"] if line.split()])
@@ -165,6 +225,14 @@ async def episodes(query: str, index: int, dub: bool = False, fresh: bool = Fals
 
 async def qualities(query: str, index: int, episode: str, dub: bool) -> list[str]:
     """Stream qualities offered for one episode, best first (e.g. ['1080', '720', '360'])."""
+    query = _clean(query)
+    key = _key("qualities", int(dub), index, episode, query.lower())
+    if (hit := _cached(key)) is not None:
+        return hit
+    return await net.once(("anicli", key), lambda: _qualities(query, index, episode, dub, key))
+
+
+async def _qualities(query: str, index: int, episode: str, dub: bool, key: str) -> list[str]:
     _, output = await _run_capture([*_mode_args(dub), "-S", str(index), "-e", episode, query])
     text = _ANSI.sub("", output)
     if "All links:" not in text:
@@ -175,7 +243,7 @@ async def qualities(query: str, index: int, episode: str, dub: bool) -> list[str
         label = line.split(">", 1)[0].strip()
         if ">" in line and label and label not in found:
             found.append(label)
-    return found
+    return _store(key, found)
 
 
 def quality_order(available: list[str], preferred: str) -> list[str]:
@@ -245,7 +313,7 @@ async def download(query: str, index: int, episode: str, dub: bool, quality: str
     """
     if not shutil.which(config.ANI_CLI):
         raise AniCliError("ani-cli is not installed.")
-    args = [*_mode_args(dub), "-d", "-q", quality or "best", "-S", str(index), "-e", episode, query]
+    args = [*_mode_args(dub), "-d", "-q", quality or "best", "-S", str(index), "-e", episode, _clean(query)]
     proc = await asyncio.create_subprocess_exec(
         config.ANI_CLI, *args,
         stdin=asyncio.subprocess.DEVNULL,

@@ -7,9 +7,7 @@ import datetime
 import json
 import time
 
-import httpx
-
-from . import db
+from . import db, net
 from .naming import base_title, normalize
 
 URL = "https://graphql.anilist.co"
@@ -29,13 +27,19 @@ query ($search: String) {
   }
 }"""
 
-_BY_ID = """
-query ($id: Int) {
-  Media(id: $id, type: ANIME) {
-    id title { romaji english } synonyms format seasonYear
-    relations { edges { relationType node { id type format title { romaji english } synonyms seasonYear } } }
-  }
-}"""
+_NODE = "id type format title { romaji english } synonyms seasonYear"
+_RELATIONS_DEPTH = 3
+
+
+def _nested(depth: int) -> str:
+    fields = _NODE
+    for _ in range(depth):
+        fields = f"{_NODE} relations {{ edges {{ relationType node {{ {fields} }} }} }}"
+    return fields
+
+
+# Relations of relations, three steps deep: one call covers three seasons of a prequel/sequel chain
+_BY_ID = "query ($id: Int) { Media(id: $id, type: ANIME) { %s } }" % _nested(_RELATIONS_DEPTH)
 
 _LIST = """
 query ($sort: [MediaSort], $season: MediaSeason, $year: Int) {
@@ -48,12 +52,15 @@ SEASON_FORMATS = {"TV", "TV_SHORT", "ONA"}
 
 
 async def _gql(query: str, variables: dict, cache_key: str, ttl: int):
-    now = int(time.time())
-    row = db.query_one("SELECT value FROM cache WHERE key = ? AND expires_at > ?", (cache_key, now))
+    row = db.query_one("SELECT value FROM cache WHERE key = ? AND expires_at > ?", (cache_key, int(time.time())))
     if row:
         return json.loads(row["value"])
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(URL, json={"query": query, "variables": variables})
+    return await net.once(("anilist", cache_key), lambda: _fetch(query, variables, cache_key, ttl))
+
+
+async def _fetch(query: str, variables: dict, cache_key: str, ttl: int):
+    now = int(time.time())
+    resp = await net.client("anilist").post(URL, json={"query": query, "variables": variables})
     if resp.status_code == 404:
         data = None
     else:
@@ -95,6 +102,23 @@ async def seasonal() -> list[dict]:
     return [_card(m) for m in (data or {}).get("Page", {}).get("media", [])]
 
 
+def _next_id(media: dict, relation: str) -> int | None:
+    """The id of the TV/ONA entry related by `relation` (PREQUEL or SEQUEL), if any."""
+    for edge in (media.get("relations") or {}).get("edges", []):
+        node = edge["node"]
+        if edge["relationType"] == relation and node["type"] == "ANIME" and node.get("format") in SEASON_FORMATS:
+            return node["id"]
+    return None
+
+
+def is_first_season(media: dict) -> bool:
+    return _next_id(media, "PREQUEL") is None
+
+
+async def best_match(title: str) -> dict | None:
+    return await _best_match(title)
+
+
 async def _best_match(title: str) -> dict | None:
     """AniList's search ranks spin-offs above the show itself, so prefer an exact title
     match, then a TV/ONA entry of the same series, then whatever ranked first."""
@@ -121,6 +145,7 @@ async def lookup(title: str) -> dict | None:
     return {
         **_card(media),
         "cover": (media.get("coverImage") or {}).get("extraLarge") or (media.get("coverImage") or {}).get("large"),
+        "thumb": (media.get("coverImage") or {}).get("large"),  # small enough for list thumbnails
         "banner": media.get("bannerImage"),
         "description": description,
         "genres": media.get("genres") or [],
@@ -129,13 +154,18 @@ async def lookup(title: str) -> dict | None:
     }
 
 
+def names(media: dict) -> list[str]:
+    """Every title AniList knows for an entry: English, romaji and synonyms."""
+    return _names(media)
+
+
 def _names(media: dict) -> list[str]:
     titles = media.get("title") or {}
     return [t for t in (titles.get("english"), titles.get("romaji"), *(media.get("synonyms") or [])) if t]
 
 
 async def _media(media_id: int) -> dict | None:
-    data = await _gql(_BY_ID, {"id": media_id}, f"anilist:id:{media_id}", 86400)
+    data = await _gql(_BY_ID, {"id": media_id}, f"anilist:id{_RELATIONS_DEPTH}:{media_id}", 86400)
     return (data or {}).get("Media")
 
 
@@ -150,26 +180,40 @@ async def season_chain(title: str, limit: int = 12) -> list[dict]:
     if not start:
         return []
 
-    def next_id(media: dict, relation: str) -> int | None:
-        for edge in (media.get("relations") or {}).get("edges", []):
-            node = edge["node"]
-            if edge["relationType"] == relation and node["type"] == "ANIME" and node.get("format") in SEASON_FORMATS:
-                return node["id"]
-        return None
+    # Every entry seen so far that came with its own relations, by id. A by-id fetch brings
+    # three steps of the chain at once, so most steps need no call of their own.
+    known: dict[int, dict] = {}
 
+    def absorb(media: dict) -> None:
+        if "relations" not in media:
+            return
+        known.setdefault(media["id"], media)
+        for edge in media["relations"].get("edges", []):
+            absorb(edge["node"])
+
+    async def full(media_id: int) -> dict | None:
+        if media_id not in known:
+            media = await _media(media_id)
+            if not media:
+                return None
+            absorb(media)
+            known.setdefault(media_id, media)
+        return known[media_id]
+
+    absorb(start)
     first, seen = start, {start["id"]}
-    while len(seen) < limit and (prev := next_id(first, "PREQUEL")) and prev not in seen:
+    while len(seen) < limit and (prev := _next_id(first, "PREQUEL")) and prev not in seen:
         seen.add(prev)
-        first = await _media(prev) or first
+        first = await full(prev) or first
 
     chain, current, seen = [], first, set()
     while current and current["id"] not in seen and len(chain) < limit:
         seen.add(current["id"])
-        if current.get("format") in SEASON_FORMATS or current is start:
+        if current.get("format") in SEASON_FORMATS or current["id"] == start["id"]:
             chain.append({"id": current["id"], "title": current["title"].get("english") or current["title"]["romaji"],
                           "names": _names(current), "year": current.get("seasonYear")})
-        nid = next_id(current, "SEQUEL")
-        current = await _media(nid) if nid else None
+        nid = _next_id(current, "SEQUEL")
+        current = await full(nid) if nid else None
     return chain
 
 

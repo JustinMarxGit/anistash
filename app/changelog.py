@@ -5,6 +5,17 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "0.8.0",
+        "title": "Faster everywhere",
+        "items": [
+            "Show pages and search open much faster: lookups now run side by side instead of one after another, "
+            "and answers are remembered across restarts.",
+            "The Downloads page updates in place: no more flicker, and progress bars glide.",
+            "Less work for your phone: refreshes pause while AniStash is in the background, pictures load as you "
+            "scroll to them, and the app itself downloads at under a third of its old size.",
+        ],
+    },
+    {
         "version": "0.7.0",
         "title": "A fresh new look",
         "items": [

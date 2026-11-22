@@ -139,8 +139,8 @@ body.scrolled .topbar { border-bottom-color: var(--border); }
 .nav a.active { color: var(--accent); }
 .nav a.active .i { transform: translateY(-1px); }
 .nav-ind {
-  position: absolute; z-index: 0; top: 6px; height: calc(var(--nav-h) - 12px); border-radius: 14px;
-  background: var(--accent-soft); transition: left .45s var(--spring), width .45s var(--spring), opacity .2s;
+  position: absolute; z-index: 0; top: 6px; left: 0; height: calc(var(--nav-h) - 12px); border-radius: 14px;
+  background: var(--accent-soft); transition: transform .45s var(--spring), width .45s var(--spring), opacity .2s;
 }
 .badge {
   position: absolute; top: 3px; left: calc(50% + 7px);
@@ -268,7 +268,8 @@ input::placeholder { color: var(--muted); opacity: .8; }
   display: flex; align-items: flex-end; padding: 22px;
   background: var(--surface-2); color: #fff;
 }
-.feature .bg { position: absolute; inset: 0; z-index: -2; background: center 30% / cover no-repeat; transform: scale(1.06); animation: kenburns 22s ease-in-out infinite alternate; }
+.feature .bg { position: absolute; inset: 0; z-index: -2; background: center 30% / cover no-repeat; transform: scale(1.06); animation: kenburns 22s ease-in-out infinite alternate; will-change: transform; }
+.feature.offscreen .bg { animation-play-state: paused; }
 .feature::after { content: ""; position: absolute; inset: 0; z-index: -1;
   background: linear-gradient(180deg, rgb(13 14 18 / 0%) 15%, rgb(13 14 18 / 55%) 55%, rgb(13 14 18 / 92%) 100%),
               linear-gradient(90deg, rgb(13 14 18 / 70%), transparent 70%); }
@@ -276,7 +277,6 @@ input::placeholder { color: var(--muted); opacity: .8; }
 .feature h1 { font-size: clamp(1.9rem, 6vw, 3.6rem); max-width: 16ch; margin: .35rem 0 .45rem; color: #fff; text-wrap: balance; }
 .feature .meta { color: rgb(255 255 255 / 78%); font-size: .92rem; margin-bottom: 1rem; }
 .feature .row .btn, .feature .row button { box-shadow: 0 8px 24px -10px var(--accent); }
-.feature .btn.glass { background: rgb(255 255 255 / 14%); border-color: rgb(255 255 255 / 22%); color: #fff; backdrop-filter: blur(6px); }
 @media (min-width: 768px) { .feature { min-height: 420px; padding: 40px; margin-top: 0; } }
 .feature > * { animation: rise .7s var(--ease) both; }
 .feature > *:nth-child(3) { animation-delay: .08s; }

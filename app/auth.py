@@ -111,10 +111,11 @@ def validate_password(password: str, username: str = "") -> None:
 # Audit log -------------------------------------------------------------------
 
 def audit(actor: str, action: str, detail: str = "", ip: str = "") -> None:
-    db.execute("INSERT INTO audit_log (at, actor, action, detail, ip) VALUES (?, ?, ?, ?, ?)",
-               (int(time.time()), actor or "-", action, detail[:300], ip[:64]))
-    # Keep the log bounded
-    db.execute("DELETE FROM audit_log WHERE id <= (SELECT MAX(id) FROM audit_log) - 5000")
+    row_id = db.execute("INSERT INTO audit_log (at, actor, action, detail, ip) VALUES (?, ?, ?, ?, ?)",
+                        (int(time.time()), actor or "-", action, detail[:300], ip[:64]))
+    # Keep the log bounded (trimming every 100th entry is plenty)
+    if row_id % 100 == 0:
+        db.execute("DELETE FROM audit_log WHERE id <= ? - 5000", (row_id,))
 
 
 def audit_entries(limit: int = 200) -> list[dict]:

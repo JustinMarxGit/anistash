@@ -14,9 +14,11 @@ from urllib.parse import urlsplit
 from fastapi import Body, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import MutableHeaders
+from starlette.middleware.gzip import GZipMiddleware
 
-from . import (anicli, anilist, auth, changelog, config, db, follows, jobs, library, locations, mediaserver, setup,
-               shows, updates)
+from . import (anicli, anilist, auth, changelog, config, db, follows, jobs, library, locations, mediaserver, net,
+               setup, shows, updates)
 from .naming import base_title, number_seasons
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -26,14 +28,23 @@ log = logging.getLogger("anistash")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init()
-    worker = asyncio.create_task(jobs.worker())
-    scheduler = asyncio.create_task(follows.scheduler())
-    updater = asyncio.create_task(updates.scheduler())
+    tasks = [asyncio.create_task(job()) for job in (jobs.worker, follows.scheduler, updates.scheduler, housekeeping)]
     yield
-    worker.cancel()
-    scheduler.cancel()
-    updater.cancel()
+    for task in tasks:
+        task.cancel()
     await mediaserver.flush()
+    await net.close()
+
+
+async def housekeeping() -> None:
+    """Hourly: forget expired cached answers."""
+    while True:
+        try:
+            db.prune_cache()
+            anicli.prune_cache()
+        except Exception:
+            log.exception("Housekeeping failed")
+        await asyncio.sleep(3600)
 
 
 app = FastAPI(title="AniStash", version=config.VERSION, lifespan=lifespan, docs_url=None, redoc_url=None,
@@ -78,30 +89,67 @@ def _same_origin(request: Request) -> bool:
     return urlsplit(source).netloc == host
 
 
-@app.middleware("http")
-async def gate(request: Request, call_next):
-    resp = await _gate(request, call_next)
-    for name, value in SECURITY_HEADERS.items():
-        resp.headers.setdefault(name, value)
-    if request.url.path.startswith("/api/"):
-        resp.headers["Cache-Control"] = "no-store"
-    return resp
+class Gate:
+    """Loads the session and enforces the setup, login, password-change and same-origin rules
+    for the API, and adds security and caching headers to every response.
+
+    A plain ASGI middleware: Starlette's @app.middleware("http") wraps every response in
+    extra tasks and streams, which cost more than the checks themselves.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        request = Request(scope)
+        path = scope["path"]
+        api = path.startswith("/api/")
+        request.state.user = auth.session_user(request.cookies.get(auth.COOKIE)) if api else None
+        extra = dict(SECURITY_HEADERS)
+        if api:
+            extra["Cache-Control"] = "no-store"
+        elif path.startswith("/static/"):
+            extra["Cache-Control"] = _static_cache(path, scope.get("query_string", b""))
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                for name, value in extra.items():
+                    if name == "Cache-Control" and api:
+                        headers[name] = value
+                    elif name not in headers:
+                        headers[name] = value
+            await send(message)
+
+        blocked = _gate(request) if api else None
+        if blocked is not None:
+            return await blocked(scope, receive, send_with_headers)
+        await self.app(scope, receive, send_with_headers)
 
 
-async def _gate(request: Request, call_next):
+def _static_cache(path: str, query: bytes) -> str:
+    # index.html links app.js/app.css with ?v=<version>, so those can be kept until the next update
+    if query.startswith(b"v="):
+        return "public, max-age=31536000, immutable"
+    if path.startswith(("/static/fonts/", "/static/icons/")):
+        return "public, max-age=604800"
+    return "no-cache"
+
+
+def _gate(request: Request) -> JSONResponse | None:
+    """The response that blocks this API request, or None to let it through."""
     path = request.url.path
-    request.state.user = auth.session_user(request.cookies.get(auth.COOKIE))
-    if not path.startswith("/api/"):
-        return await call_next(request)
     if request.method in UNSAFE_METHODS and not _same_origin(request):
         return JSONResponse({"detail": "Cross-site request blocked."}, status_code=403)
     if path.startswith(PUBLIC_ROUTES):
-        return await call_next(request)
+        return None
     user = request.state.user
     if not auth.has_admin():
         # Fresh install: only the first wizard steps work, without a login
         if path in ("/api/setup/system", "/api/setup/admin", "/api/setup/step"):
-            return await call_next(request)
+            return None
         return JSONResponse({"detail": "setup required"}, status_code=409)
     if user is None:
         return JSONResponse({"detail": "Not logged in"}, status_code=401)
@@ -109,7 +157,11 @@ async def _gate(request: Request, call_next):
         return JSONResponse({"detail": "password change required"}, status_code=403)
     if not db.get_setting("setup_complete") and not path.startswith(SETUP_ROUTES):
         return JSONResponse({"detail": "setup required"}, status_code=409)
-    return await call_next(request)
+    return None
+
+
+app.add_middleware(Gate)
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 def need(role: str):
@@ -396,9 +448,11 @@ async def update_tools(user=ADMIN):
 
 @app.get("/api/locations")
 async def list_locations(user=VIEWER):
+    rows = locations.all_locations()
+    statuses = await asyncio.gather(*(asyncio.to_thread(locations.status, locations.get(loc["id"])) for loc in rows))
     out = []
-    for loc in locations.all_locations():
-        entry = {**loc, "status": await asyncio.to_thread(locations.status, locations.get(loc["id"]))}
+    for loc, state in zip(rows, statuses):
+        entry = {**loc, "status": state}
         if user["role"] != "admin":
             # Members only need the name to pick a download location
             entry = {k: entry[k] for k in ("id", "name", "type", "is_default", "status")}
@@ -473,12 +527,19 @@ async def browse(kind: str, user=VIEWER):
 async def search(q: str, dub: bool = False, user=VIEWER):
     """Searches by what was typed and by the show's name in the other language (English ↔
     Japanese), so either name finds it. Each result remembers which query found it."""
-    try:
-        others = await anilist.other_names(q)
-    except Exception:  # AniList being down only means no second-language search
-        others = []
-    queries = [q, *others[:2]]
-    found = await asyncio.gather(*(anicli.search(x, dub) for x in queries), return_exceptions=True)
+    async def other_names():
+        try:
+            return (await anilist.other_names(q))[:2]
+        except Exception:  # AniList being down only means no second-language search
+            return []
+
+    async def search_others():
+        names = await other_names()
+        return names, await asyncio.gather(*(anicli.search(x, dub) for x in names), return_exceptions=True)
+
+    # The search for what was typed doesn't wait for AniList to answer
+    first, (others, rest) = await asyncio.gather(_attempt(anicli.search(q, dub)), search_others())
+    queries, found = [q, *others], [first, *rest]
     if isinstance(found[0], Exception) and all(isinstance(f, Exception) or not f for f in found[1:]):
         raise found[0]
     results, seen = [], set()
@@ -490,7 +551,15 @@ async def search(q: str, dub: bool = False, user=VIEWER):
                 continue
             seen.add(r.title.lower())
             results.append({**r.__dict__, "query": query, "key": f"{len(results)}"})
-    return {"results": results, "also_searched": others[:2]}
+    return {"results": results, "also_searched": others}
+
+
+async def _attempt(coro):
+    """The result, or the exception it raised (like gather(return_exceptions=True) for one)."""
+    try:
+        return await coro
+    except Exception as exc:
+        return exc
 
 
 @app.get("/api/meta")
@@ -503,8 +572,8 @@ async def meta(title: str, user=VIEWER):
 
 @app.get("/api/show")
 async def show(q: str, i: int, t: str, dub: bool = False, user=VIEWER):
-    data = await shows.seasons(q, i, t, dub)
-    data["meta"] = await meta(t, user)
+    data, info = await asyncio.gather(shows.seasons(q, i, t, dub), meta(t, user))
+    data["meta"] = info
     return data
 
 
@@ -531,11 +600,10 @@ async def library_match(items: list[dict] = Body(..., embed=True), user=VIEWER):
 async def existing(location_id: int = Body(...), series_name: str = Body(...), entries: list[dict] = Body(...),
                    user=VIEWER):
     """Which episodes of each season are already at the location, for the ✓ marks."""
-    return {"existing": {
-        e["title"]: sorted(jobs.existing_episodes(location_id, series_name, int(e["season"]), e["title"],
-                                                  [str(x) for x in e.get("episodes", [])], int(e.get("offset") or 0)))
-        for e in entries
-    }}
+    found = await asyncio.gather(*(asyncio.to_thread(
+        jobs.existing_episodes, location_id, series_name, int(e["season"]), e["title"],
+        [str(x) for x in e.get("episodes", [])], int(e.get("offset") or 0)) for e in entries))
+    return {"existing": {e["title"]: sorted(eps) for e, eps in zip(entries, found)}}
 
 
 # Queue ---------------------------------------------------------------------------------
@@ -552,17 +620,28 @@ def _own_batch(user, batch_id: int) -> None:
 @app.post("/api/queue")
 async def enqueue(request: Request, series_name: str = Body(...), location_id: int = Body(...),
                   mode: str = Body("sub"), quality: str = Body("best"), entries: list[dict] = Body(...), user=MEMBER):
-    for entry in entries:
-        if entry.get("episodes") == "all":
-            entry["episodes"] = await anicli.episodes(entry["query"], int(entry["index"]), mode == "dub")
+    async def all_episodes(entry):
+        entry["episodes"] = await anicli.episodes(entry["query"], int(entry["index"]), mode == "dub")
+    await asyncio.gather(*(all_episodes(e) for e in entries if e.get("episodes") == "all"))
     result = jobs.enqueue(series_name, location_id, mode, quality, entries, created_by=user["id"])
     auth.audit(user["username"], "queued", f"{series_name}: {result['added']} episode(s), {mode}", client_ip(request))
     return result
 
 
 @app.get("/api/queue")
-async def queue(user=VIEWER):
-    return {"batches": jobs.snapshot(), "me": user["id"], "admin": user["role"] == "admin"}
+async def queue(since: str = "", user=VIEWER):
+    """The queue, or just {unchanged: true} when nothing changed since revision `since`."""
+    rev = jobs.revision()
+    if since and since == rev:
+        return {"rev": rev, "unchanged": True}
+    return {"rev": rev, "batches": jobs.snapshot(), "counts": jobs.counts(), "me": user["id"],
+            "admin": user["role"] == "admin"}
+
+
+@app.get("/api/queue/summary")
+async def queue_summary(user=VIEWER):
+    """Queued and running episode counts, for the Downloads badge."""
+    return jobs.counts()
 
 
 @app.post("/api/queue/clear-finished")
@@ -673,8 +752,19 @@ async def manifest():
     return FileResponse(config.APP_DIR / "static" / "manifest.webmanifest", media_type="application/manifest+json")
 
 
+def _index_html() -> bytes:
+    """index.html with versioned app.js/app.css links, so browsers can keep them until an update."""
+    html = (config.APP_DIR / "static" / "index.html").read_text()
+    for asset in ("/static/app.css", "/static/app.js"):
+        html = html.replace(f'"{asset}"', f'"{asset}?v={config.VERSION}"')
+    return html.encode()
+
+
+INDEX_HTML = _index_html()
+
+
 @app.get("/{path:path}")
 async def spa(path: str):
     if path.startswith("api/"):
         return Response(status_code=404)
-    return FileResponse(config.APP_DIR / "static" / "index.html", headers={"Cache-Control": "no-cache"})
+    return Response(INDEX_HTML, media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-cache"})

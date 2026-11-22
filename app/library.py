@@ -2,7 +2,8 @@
 
 Both are indexed by a normalized series name (year and season suffix removed, case and
 punctuation ignored), so "Blue Box Season 2", "Blue Box (2024)" and "BLUE BOX" are the
-same show. The index is cached briefly and refreshed after each finished download.
+same show. The index is cached for a few minutes; a finished download updates just its
+own season in it instead of forcing a rescan of every folder.
 """
 
 import asyncio
@@ -11,7 +12,7 @@ import os
 import re
 import time
 
-from . import db, locations, mediaserver
+from . import db, locations, mediaserver, net
 from .naming import base_title, detect_season, normalize
 
 log = logging.getLogger("anistash.library")
@@ -28,6 +29,23 @@ def series_key(name: str) -> str:
 
 def invalidate() -> None:
     _cache.clear()
+
+
+def add_episode(video: str, location_name: str) -> None:
+    """Updates the cached index for a newly downloaded episode (recounts its one folder)."""
+    hit = _cache.get("index")
+    if not hit or not video:
+        return
+    folder = os.path.dirname(video)
+    match = _SEASON_DIR.match(os.path.basename(folder))
+    if match:
+        series_dir, season = os.path.basename(os.path.dirname(folder)), int(match.group(1) or 0)
+    else:  # "original" naming: episodes sit in the series folder
+        series_dir, season = os.path.basename(folder), 1
+    entry = hit[1][0].setdefault(series_key(series_dir), {"name": series_dir, "locations": [], "seasons": {}})
+    if location_name not in entry["locations"]:
+        entry["locations"].append(location_name)
+    entry["seasons"][season] = max(_count_videos(folder), entry["seasons"].get(season, 0))
 
 
 def _count_videos(path: str) -> int:
@@ -92,6 +110,10 @@ async def _index() -> tuple[dict, dict]:
     hit = _cache.get("index")
     if hit and hit[0] > time.time():
         return hit[1]
+    return await net.once(("library",), _rebuild)  # pages opened together share one scan
+
+
+async def _rebuild() -> tuple[dict, dict]:
     disk, server = await asyncio.gather(asyncio.to_thread(_scan_disk), _scan_server())
     _cache["index"] = (time.time() + TTL, (disk, server))
     return disk, server

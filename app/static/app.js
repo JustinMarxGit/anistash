@@ -4,8 +4,9 @@ const view = document.getElementById("view");
 const nav = document.getElementById("nav");
 let status = null;          // /api/status
 let prefs = null;           // /api/settings, for defaults like sub/dub
-let pollTimer = null;       // downloads page refresh
-let badgeTimer = null;      // queue badge refresh
+let pagePoll = null;        // the current page's refresh (downloads)
+let badgePoll = null;       // queue badge refresh
+let routeSeq = 0;           // bumped on every navigation, so late async work can tell it's stale
 
 // Helpers ------------------------------------------------------------------
 
@@ -124,6 +125,74 @@ function formData(form) {
     data[el.name] = el.type === "checkbox" ? el.checked : el.value;
   }
   return data;
+}
+
+// A repeating refresh that pauses while the tab is hidden (catching up as soon as it's
+// visible again) and never starts a run while the previous one is still going
+function poller(fn, ms) {
+  let busy = false;
+  const tick = async () => {
+    if (busy || document.hidden) return;
+    busy = true;
+    try { await fn(); } catch { /* the next tick tries again */ } finally { busy = false; }
+  };
+  const timer = setInterval(tick, ms);
+  const onVisible = () => { if (!document.hidden) tick(); };
+  document.addEventListener("visibilitychange", onVisible);
+  return { tick, stop() { clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); } };
+}
+
+// Updates `from` in place to look like `to` (both elements), keeping the nodes that stay the
+// same, so refreshes don't restart animations, lose hover/focus or reload anything.
+// Children with data-key are matched by key, so reordered rows move instead of being rebuilt.
+function morph(from, to) {
+  if (from.nodeType !== to.nodeType || from.nodeName !== to.nodeName
+      || (from.nodeType === 1 && from.dataset.key !== to.dataset.key)) {
+    from.replaceWith(to);
+    return;
+  }
+  if (from.nodeType !== 1) {
+    if (from.nodeValue !== to.nodeValue) from.nodeValue = to.nodeValue;
+    return;
+  }
+  for (const { name } of [...from.attributes]) if (!to.hasAttribute(name)) from.removeAttribute(name);
+  for (const { name, value } of to.attributes) if (from.getAttribute(name) !== value) from.setAttribute(name, value);
+  morphChildren(from, to);
+}
+
+function morphChildren(from, to) {
+  const keyed = new Map();
+  for (const child of from.children) if (child.dataset.key) keyed.set(child.dataset.key, child);
+  let cur = from.firstChild;
+  for (const next of [...to.childNodes]) {
+    const key = next.nodeType === 1 ? next.dataset.key : undefined;
+    if (key && keyed.has(key)) {
+      const old = keyed.get(key);
+      keyed.delete(key);
+      if (old === cur) cur = cur.nextSibling;
+      else from.insertBefore(old, cur);
+      morph(old, next);
+    } else if (!key && cur && !(cur.nodeType === 1 && cur.dataset.key)) {
+      const old = cur;
+      cur = cur.nextSibling;
+      morph(old, next);
+    } else {
+      from.insertBefore(next, cur);
+    }
+  }
+  while (cur) { const after = cur.nextSibling; cur.remove(); cur = after; }
+}
+
+// Artwork loads as it nears the screen instead of all at once. Elements carry the image
+// URL in data-bg; `root` is a sideways-scrolling shelf, which needs its own observer.
+function lazyImages(container, root = null) {
+  const els = container.querySelectorAll("[data-bg]");
+  const show = (el) => { el.style.backgroundImage = `url(${JSON.stringify(el.dataset.bg)})`; el.removeAttribute("data-bg"); };
+  if (!("IntersectionObserver" in window)) return els.forEach(show);
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) { show(e.target); io.unobserve(e.target); }
+  }, { root, rootMargin: root ? "0px 600px" : "500px 0px" });
+  els.forEach((el) => io.observe(el));
 }
 
 function sheet(html) {
@@ -316,7 +385,13 @@ document.addEventListener("contextmenu", (e) => { if (e.target.closest("[data-ti
 document.addEventListener("focusin", (e) => { if (e.target.matches?.("[data-tip]:focus-visible")) showTip(e.target); });
 document.addEventListener("focusout", hideTip);
 window.addEventListener("scroll", hideTip, { passive: true });
-new MutationObserver(() => applyTips()).observe(document.body, { childList: true, subtree: true });
+// New elements get their tips once per frame, however many changes that frame made
+let tipsQueued = false;
+new MutationObserver(() => {
+  if (tipsQueued) return;
+  tipsQueued = true;
+  requestAnimationFrame(() => { tipsQueued = false; applyTips(); });
+}).observe(document.body, { childList: true, subtree: true });
 applyTips();
 
 // What's new and the guided tour ------------------------------------------------------
@@ -483,7 +558,9 @@ const can = {
 };
 
 async function route() {
-  clearInterval(pollTimer);
+  const seq = ++routeSeq;
+  pagePoll?.stop();
+  pagePoll = null;
   document.querySelector(".actionbar")?.remove();
   document.querySelector(".sheet-backdrop")?.remove();
   const name = location.hash.replace(/^#\/?/, "").split("?")[0];
@@ -493,6 +570,7 @@ async function route() {
     view.innerHTML = `<div class="error-box">Can't reach AniStash: ${esc(e.message)}</div>`;
     return;
   }
+  if (seq !== routeSeq) return;  // a newer navigation started while this one waited
   // Fresh install or unfinished setup always lands in the wizard
   if (!status.has_admin && name !== "setup") return void (location.hash = "#/setup");
   if (status.has_admin && !status.logged_in && name !== "login") return void (location.hash = "#/login");
@@ -513,8 +591,9 @@ async function route() {
   view.classList.remove("enter");
   void view.offsetWidth;
   view.classList.add("enter");
-  if (ready && !badgeTimer) { refreshBadge(); badgeTimer = setInterval(refreshBadge, 10000); }
+  if (ready && !badgePoll) { badgePoll = poller(refreshBadge, 10000); badgePoll.tick(); }
   if (ready && !prefs) prefs = await api("/api/settings").catch(() => null);
+  if (seq !== routeSeq) return;
   window.scrollTo(0, 0);
   await (routes[name] || browseView)();
   if (ready && !route.bannerChecked) { route.bannerChecked = true; refreshUpdateBanner(); }
@@ -526,13 +605,15 @@ async function route() {
 }
 
 async function refreshBadge() {
-  try {
-    const { batches } = await api("/api/queue");
-    const active = batches.reduce((n, b) => n + b.counts.queued + b.counts.running, 0);
-    const badge = document.getElementById("queue-badge");
-    badge.hidden = active === 0;
-    badge.textContent = active;
-  } catch { /* shown elsewhere */ }
+  if (pagePoll && $("#queue[data-view=queue]")) return;  // the queue page's own refresh keeps it current
+  try { setBadge(await api("/api/queue/summary")); } catch { /* shown elsewhere */ }
+}
+
+function setBadge(counts) {
+  const active = counts.queued + counts.running;
+  const badge = document.getElementById("queue-badge");
+  badge.hidden = active === 0;
+  if (badge.textContent !== String(active)) badge.textContent = active;
 }
 
 // English / Japanese titles: saved per person, applied by re-rendering the page
@@ -556,7 +637,7 @@ function moveNavIndicator() {
   if (!ind) return;
   if (!active || nav.hidden) { ind.style.opacity = "0"; return; }
   ind.style.opacity = "1";
-  ind.style.left = `${active.offsetLeft}px`;
+  ind.style.transform = `translateX(${active.offsetLeft}px)`;
   ind.style.width = `${active.offsetWidth}px`;
 }
 window.addEventListener("resize", moveNavIndicator);
@@ -632,7 +713,7 @@ function posterCard(m, k, { rank = 0 } = {}) {
   const sub = [m.format?.replace("_", " "), m.year, m.episodes && `${m.episodes} eps`].filter(Boolean).join(" · ");
   return `<a class="poster rise" style="--i:${k}" href="#/search?q=${encodeURIComponent(m.english || m.romaji || m.title)}" data-card="${m.id}">
       ${rank ? `<span class="rank" aria-hidden="true">${rank}</span>` : ""}
-      <div class="art" style="background-image:url('${esc(m.cover)}')"><span data-lib></span></div>
+      <div class="art" data-bg="${esc(m.cover || "")}"><span data-lib></span></div>
       <div class="name">${esc(showTitle(m))}</div>
       <div class="sub">${esc(sub)}</div>
     </a>`;
@@ -644,6 +725,12 @@ function markLibrary(el, items) {
       for (const slot of el.querySelectorAll(`[data-card="${id}"] [data-lib]`)) slot.outerHTML = libraryBadge(m);
     }
   });
+}
+
+// The banner's slow zoom only runs while it's on screen
+function pauseOffscreen(el) {
+  if (!el || !("IntersectionObserver" in window)) return;
+  new IntersectionObserver(([e]) => el.classList.toggle("offscreen", !e.isIntersecting)).observe(el);
 }
 
 async function browseView() {
@@ -665,7 +752,9 @@ async function browseView() {
     b.addEventListener("click", () => { const shelf = $("#trending"); shelf.scrollBy({ left: Number(b.dataset.shelf) * shelf.clientWidth * .8, behavior: "smooth" }); });
   }
 
-  api("/api/browse/trending").then(({ items, error }) => {
+  const seq = routeSeq;
+  const trending = browseList("trending"), seasonal = browseList("seasonal");
+  trending.then(({ items, error }) => {
     const shelf = $("#trending"), feature = $("#feature");
     if (!shelf) return;
     if (!items.length) { shelf.outerHTML = `<p class="muted">${esc(error || "Nothing to show.")}</p>`; feature.remove(); return; }
@@ -681,16 +770,33 @@ async function browseView() {
       </div>`;
     shelf.innerHTML = items.slice(0, 10).map((m, k) => posterCard(m, k, { rank: k + 1 })).join("")
       + items.slice(10).map((m, k) => posterCard(m, k + 10)).join("");
-    markLibrary(view, items);
+    lazyImages(shelf, shelf);
+    pauseOffscreen(feature);
   }).catch((e) => { const el = $("#trending"); if (el) el.outerHTML = `<p class="muted">${esc(e.message)}</p>`; });
 
-  api("/api/browse/seasonal").then(({ items, error }) => {
+  seasonal.then(({ items, error }) => {
     const el = $("#seasonal");
     if (!el) return;
     if (!items.length) { el.outerHTML = `<p class="muted">${esc(error || "Nothing to show.")}</p>`; return; }
     el.innerHTML = items.map((m, k) => posterCard(m, k)).join("");
-    markLibrary(el, items);
+    lazyImages(el);
   }).catch((e) => { const el = $("#seasonal"); if (el) el.outerHTML = `<p class="muted">${esc(e.message)}</p>`; });
+
+  // One library check for both lists
+  const lists = await Promise.all([trending, seasonal].map((p) => p.then((d) => d.items).catch(() => [])));
+  const unique = [...new Map(lists.flat().map((m) => [m.id, m])).values()];
+  if (seq === routeSeq) markLibrary(view, unique);
+}
+
+// Trending and seasonal lists are kept for 5 minutes, so going back to Browse is instant
+const browseCache = new Map();
+function browseList(kind) {
+  const hit = browseCache.get(kind);
+  if (hit && Date.now() - hit.at < 300000) return hit.promise;
+  const promise = api(`/api/browse/${kind}`);
+  browseCache.set(kind, { at: Date.now(), promise });
+  promise.then((d) => { if (!d.items.length) browseCache.delete(kind); }, () => browseCache.delete(kind));
+  return promise;
 }
 
 // Search -------------------------------------------------------------------------------
@@ -752,7 +858,7 @@ async function searchView() {
   for (const thumb of $$(".thumb[data-title]")) {
     fetchMeta(thumb.dataset.title).then((m) => {
       if (!m) return;
-      thumb.style.backgroundImage = `url('${m.cover}')`;
+      thumb.style.backgroundImage = `url(${JSON.stringify(m.thumb || m.cover)})`;
       const row = thumb.parentElement;
       // Show the title in the chosen language, with the other one underneath
       const site = thumb.dataset.title;
@@ -795,7 +901,7 @@ async function queueSheet(picked, mode) {
     [planned, locs, settings] = await Promise.all([
       api("/api/plan", { method: "POST", body: { entries: picked, dub } }),
       api("/api/locations"),
-      api("/api/settings"),
+      prefs || api("/api/settings"),
     ]);
   } catch (e) {
     box.innerHTML = `<div class="error-box">${esc(e.message)}</div><button class="block" data-close>Close</button>`;
@@ -877,7 +983,7 @@ async function showView() {
     [data, locs, settings] = await Promise.all([
       api(`/api/show?q=${encodeURIComponent(p.q)}&i=${p.i}&t=${encodeURIComponent(p.t)}&dub=${dub}`),
       api("/api/locations"),
-      api("/api/settings"),
+      prefs || api("/api/settings"),
     ]);
   } catch (e) {
     view.innerHTML = `<div class="error-box">${esc(e.message)}</div><a class="btn" href="#/search?q=${encodeURIComponent(p.q || "")}">Back to search</a>`;
@@ -1159,11 +1265,12 @@ async function downloadsView() {
       <button type="button" class="${tab === "queue" ? "on" : ""}" data-tabto="queue">Queue</button>
       <button type="button" class="${tab === "following" ? "on" : ""}" data-tabto="following">Following</button>
     </div>
-    <div id="queue">${loading()}</div>`;
+    <div id="queue" data-view="${tab}">${loading()}</div>`;
   for (const b of $$("[data-tabto]")) b.onclick = () => { location.hash = `#/downloads${b.dataset.tabto === "following" ? "?tab=following" : ""}`; };
+  const seq = routeSeq;
   if (tab === "following") {
     await renderFollowing();
-    pollTimer = setInterval(renderFollowing, 15000);
+    if (seq === routeSeq) pagePoll = poller(renderFollowing, 15000);
     return;
   }
   $("#clear")?.addEventListener("click", async () => {
@@ -1171,8 +1278,10 @@ async function downloadsView() {
     toast(`Removed ${r.removed} finished ${r.removed === 1 ? "batch" : "batches"}`);
     renderQueue();
   });
+  queueState = null;
+  bindQueueActions($("#queue"));
   await renderQueue();
-  pollTimer = setInterval(renderQueue, 2000);
+  if (seq === routeSeq) pagePoll = poller(renderQueue, 2000);  // unless we've already left the page
 }
 
 const AIRING = {
@@ -1236,92 +1345,106 @@ async function renderFollowing() {
 
 const STATUS_PILL = { queued: "", running: "accent", done: "ok", failed: "bad", cancelled: "warn", skipped: "" };
 
-async function renderQueue() {
-  let batches, me, isAdmin;
-  try { ({ batches, me, admin: isAdmin } = await api("/api/queue")); }
-  catch (e) { if ($("#queue")) $("#queue").innerHTML = `<div class="error-box">${esc(e.message)}</div>`; return; }
-  const el = $("#queue");
-  if (!el) return;
-  if (!batches.length) {
-    el.innerHTML = `<div class="card muted">Nothing queued. Find something under <a href="#/">Browse</a> or <a href="#/search">Search</a>.</div>`;
-    return;
-  }
-  el.innerHTML = batches.map((b) => {
-    const total = b.items.length;
-    const mine = isAdmin || (can.download() && b.created_by === me);
-    const progress = b.items.reduce((n, i) => n + (i.status === "done" ? 100 : i.status === "running" ? i.progress : 0), 0) / Math.max(total, 1);
-    const open = expanded.has(b.id) || b.counts.running > 0 && !expanded.has(-b.id);
-    const state = b.counts.running ? `<span class="pill accent">Downloading</span>`
-      : b.counts.queued ? `<span class="pill">Queued</span>`
-      : b.counts.failed ? `<span class="pill bad">${b.counts.failed} failed</span>`
-      : `<span class="pill ok">Done</span>`;
-    return `<div class="batch" data-batch="${b.id}">
-      <div class="batch-head" data-toggle="${b.id}" aria-expanded="${open}">
-        <div class="grow">
-          <b>${esc(b.series_name)} · S${String(b.season).padStart(2, "0")}</b>
-          <div class="muted small">${esc(b.title)}</div>
-          <div class="muted small">${b.counts.done}/${total} episodes · ${esc(MODE_LABEL[b.mode] || b.mode)} · ${esc(b.location || "?")}${b.owner ? ` · by ${esc(b.owner)}` : ""}${b.follow_id ? ` · <span class="pill accent">auto</span>` : ""}</div>
-          <div class="progress ${b.active ? "" : "done"}" style="margin-top:.4rem"><i style="width:${progress.toFixed(1)}%"></i></div>
-        </div>
-        ${state}
-      </div>
-      ${b.scanned_at && !b.warning ? `<div class="muted small" style="margin:-6px 14px 12px" data-tip="Your media server was asked to look for these episodes. It can take a minute or two for them to appear">✓ Sent to ${esc(b.scanned_with)} · ${relTime(b.scanned_at)}</div>` : ""}
-      ${b.warning ? `<div class="warn-box" style="margin:0 14px 12px">${esc(b.warning)}
-        ${mine && /scan failed/.test(b.warning) ? `<div style="margin-top:.5rem"><button class="small" data-b="rescan">Scan now</button></div>` : ""}</div>` : ""}
-      ${open ? `
-        ${mine ? `<div class="batch-tools">
-          <button class="small icon" data-b="up" aria-label="Move up">${icon("up")}</button>
-          <button class="small icon" data-b="down" aria-label="Move down">${icon("down")}</button>
-          ${b.counts.failed + b.counts.cancelled ? `<button class="small" data-b="retry">Retry failed</button>` : ""}
-          ${b.active ? `<button class="small danger" data-b="cancel">Cancel</button>` : `<button class="small" data-b="remove">Remove</button>`}
-        </div>` : ""}
-        <div class="items">${b.items.map((i) => `
-          <div class="item" data-item="${i.id}">
-            <span class="epno">E${esc(i.episode)}${b.offset && /^\d+$/.test(i.episode) ? `<div class="muted small">→ E${Number(i.episode) + b.offset}</div>` : ""}</span>
-            <div style="min-width:0">
-              <span class="pill ${STATUS_PILL[i.status]}">${esc(i.status)}</span>${i.quality ? ` <span class="pill">${esc(i.quality)}</span>` : ""}
-              ${i.status === "running" ? `<div class="progress ${i.progress ? "" : "indeterminate"}" style="margin-top:.35rem"><i style="width:${i.progress}%"></i></div>` : ""}
-              ${i.detail ? `<div class="detail">${esc(i.detail)}</div>` : ""}
-              ${i.error ? `<div class="err">${esc(i.error)}</div>` : ""}
-            </div>
-            <div class="row" ${mine ? "" : "hidden"}>
-              ${i.status === "queued" ? `<button class="small icon" data-i="up" aria-label="Move up">${icon("up")}</button><button class="small icon" data-i="down" aria-label="Move down">↓</button>` : ""}
-              ${["failed", "cancelled"].includes(i.status) ? `<button class="small" data-i="retry">Retry</button>` : ""}
-              ${["queued", "running"].includes(i.status) ? `<button class="small icon danger" data-i="cancel" aria-label="Cancel">${icon("x")}</button>` : ""}
-            </div>
-          </div>`).join("")}</div>` : ""}
-    </div>`;
-  }).join("");
+let queueState = null;  // the last queue answer, with its revision
 
-  for (const head of $$("[data-toggle]")) {
-    head.onclick = () => {
+// Fetches the queue (an unchanged queue answers with just its revision) and patches the page
+async function renderQueue() {
+  let data;
+  const since = queueState ? `?since=${encodeURIComponent(queueState.rev)}` : "";
+  try { data = await api(`/api/queue${since}`); }
+  catch (e) { if ($("#queue")) $("#queue").innerHTML = `<div class="error-box">${esc(e.message)}</div>`; return; }
+  if (!$("#queue")) return;
+  if (!data.unchanged) {
+    queueState = data;
+    setBadge(data.counts);
+  }
+  drawQueue();
+}
+
+function drawQueue() {
+  const el = $("#queue");
+  if (!el || !queueState) return;
+  const { batches, me, admin: isAdmin } = queueState;
+  const next = document.createElement("div");
+  next.innerHTML = !batches.length
+    ? `<div class="card muted">Nothing queued. Find something under <a href="#/">Browse</a> or <a href="#/search">Search</a>.</div>`
+    : batches.map((b) => batchHTML(b, isAdmin || (can.download() && b.created_by === me))).join("");
+  applyTips(next);  // so patching keeps the tips already on the page
+  morphChildren(el, next);
+}
+
+function batchHTML(b, mine) {
+  const total = b.items.length;
+  const progress = b.items.reduce((n, i) => n + (i.status === "done" ? 100 : i.status === "running" ? i.progress : 0), 0) / Math.max(total, 1);
+  const open = expanded.has(b.id) || b.counts.running > 0 && !expanded.has(-b.id);
+  const state = b.counts.running ? `<span class="pill accent">Downloading</span>`
+    : b.counts.queued ? `<span class="pill">Queued</span>`
+    : b.counts.failed ? `<span class="pill bad">${b.counts.failed} failed</span>`
+    : `<span class="pill ok">Done</span>`;
+  return `<div class="batch" data-batch="${b.id}" data-key="b${b.id}">
+    <div class="batch-head" data-toggle="${b.id}" aria-expanded="${open}">
+      <div class="grow">
+        <b>${esc(b.series_name)} · S${String(b.season).padStart(2, "0")}</b>
+        <div class="muted small">${esc(b.title)}</div>
+        <div class="muted small">${b.counts.done}/${total} episodes · ${esc(MODE_LABEL[b.mode] || b.mode)} · ${esc(b.location || "?")}${b.owner ? ` · by ${esc(b.owner)}` : ""}${b.follow_id ? ` · <span class="pill accent">auto</span>` : ""}</div>
+        <div class="progress ${b.active ? "" : "done"}" style="margin-top:.4rem"><i style="width:${progress.toFixed(1)}%"></i></div>
+      </div>
+      ${state}
+    </div>
+    ${b.scanned_at && !b.warning ? `<div class="muted small" style="margin:-6px 14px 12px" data-tip="Your media server was asked to look for these episodes. It can take a minute or two for them to appear">✓ Sent to ${esc(b.scanned_with)} · ${relTime(b.scanned_at)}</div>` : ""}
+    ${b.warning ? `<div class="warn-box" style="margin:0 14px 12px">${esc(b.warning)}
+      ${mine && /scan failed/.test(b.warning) ? `<div style="margin-top:.5rem"><button class="small" data-b="rescan">Scan now</button></div>` : ""}</div>` : ""}
+    ${open ? `
+      ${mine ? `<div class="batch-tools">
+        <button class="small icon" data-b="up" aria-label="Move up">${icon("up")}</button>
+        <button class="small icon" data-b="down" aria-label="Move down">${icon("down")}</button>
+        ${b.counts.failed + b.counts.cancelled ? `<button class="small" data-b="retry">Retry failed</button>` : ""}
+        ${b.active ? `<button class="small danger" data-b="cancel">Cancel</button>` : `<button class="small" data-b="remove">Remove</button>`}
+      </div>` : ""}
+      <div class="items">${b.items.map((i) => `
+        <div class="item" data-item="${i.id}" data-key="i${i.id}">
+          <span class="epno">E${esc(i.episode)}${b.offset && /^\d+$/.test(i.episode) ? `<div class="muted small">→ E${Number(i.episode) + b.offset}</div>` : ""}</span>
+          <div style="min-width:0">
+            <span class="pill ${STATUS_PILL[i.status]}">${esc(i.status)}</span>${i.quality ? ` <span class="pill">${esc(i.quality)}</span>` : ""}
+            ${i.status === "running" ? `<div class="progress ${i.progress ? "live" : "indeterminate"}" style="margin-top:.35rem"><i style="width:${i.progress}%"></i></div>` : ""}
+            ${i.detail ? `<div class="detail">${esc(i.detail)}</div>` : ""}
+            ${i.error ? `<div class="err">${esc(i.error)}</div>` : ""}
+          </div>
+          <div class="row" ${mine ? "" : "hidden"}>
+            ${i.status === "queued" ? `<button class="small icon" data-i="up" aria-label="Move up">${icon("up")}</button><button class="small icon" data-i="down" aria-label="Move down">${icon("down")}</button>` : ""}
+            ${["failed", "cancelled"].includes(i.status) ? `<button class="small" data-i="retry">Retry</button>` : ""}
+            ${["queued", "running"].includes(i.status) ? `<button class="small icon danger" data-i="cancel" aria-label="Cancel">${icon("x")}</button>` : ""}
+          </div>
+        </div>`).join("")}</div>` : ""}
+  </div>`;
+}
+
+// One set of click handlers for the whole list, so patching rows never needs to rebind them
+function bindQueueActions(el) {
+  el.addEventListener("click", async (e) => {
+    const head = e.target.closest("[data-toggle]");
+    const b = e.target.closest("[data-b]"), i = e.target.closest("[data-i]");
+    if (head && !b && !i) {
       const id = Number(head.dataset.toggle);
       const open = head.getAttribute("aria-expanded") === "true";
       expanded.delete(id); expanded.delete(-id);
       expanded.add(open ? -id : id);
-      renderQueue();
-    };
-  }
-  for (const b of $$("[data-b]")) {
-    b.onclick = async () => {
-      const id = b.closest("[data-batch]").dataset.batch;
-      try {
+      return drawQueue();
+    }
+    try {
+      if (b) {
+        const id = b.closest("[data-batch]").dataset.batch;
         if (b.dataset.b === "remove") await api(`/api/batches/${id}`, { method: "DELETE" });
         else if (b.dataset.b === "rescan") {
           await busy(b, () => api(`/api/batches/${id}/rescan`, { method: "POST" }));
           toast("Asked your media server to scan the new episodes");
         } else await api(`/api/batches/${id}/${b.dataset.b}`, { method: "POST" });
-        renderQueue(); refreshBadge();
-      } catch (e) { toast(e.message, true); }
-    };
-  }
-  for (const b of $$("[data-i]")) {
-    b.onclick = async () => {
-      const id = b.closest("[data-item]").dataset.item;
-      try { await api(`/api/items/${id}/${b.dataset.i}`, { method: "POST" }); renderQueue(); refreshBadge(); }
-      catch (e) { toast(e.message, true); }
-    };
-  }
+      } else if (i) {
+        await api(`/api/items/${i.closest("[data-item]").dataset.item}/${i.dataset.i}`, { method: "POST" });
+      } else return;
+      renderQueue();
+    } catch (err) { toast(err.message, true); }
+  });
 }
 
 // Locations (shared by settings and setup) ---------------------------------------------------
@@ -1734,7 +1857,7 @@ async function saveMediaServer(form) {
     library_id: d.kind === "none" ? "" : d.library_id,
     library_name: d.library_id ? option.textContent.replace(/ \([^)]*\)$/, "") : "",
   } });
-  await api("/api/settings", { method: "PUT", body: { media_refresh: d.media_refresh } });
+  prefs = await api("/api/settings", { method: "PUT", body: { media_refresh: d.media_refresh } });
   // What's shown is now what's saved
   form.library_id.dataset.saved = d.kind === "none" ? "" : d.library_id;
   form.library_id.dispatchEvent(new Event("change"));

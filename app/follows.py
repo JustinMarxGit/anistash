@@ -40,22 +40,26 @@ def get(follow_id: int):
     return row
 
 
+_WITH_NAMES = ("SELECT follows.*, users.username AS owner_name, locations.name AS location_name FROM follows "
+               "LEFT JOIN users ON users.id = follows.created_by LEFT JOIN locations ON locations.id = follows.location_id")
+
+
 def to_dict(row) -> dict:
-    owner = db.query_one("SELECT username FROM users WHERE id = ?", (row["created_by"],)) if row["created_by"] else None
-    loc = db.query_one("SELECT name FROM locations WHERE id = ?", (row["location_id"],))
+    if "location_name" not in row.keys():
+        row = db.query_one(_WITH_NAMES + " WHERE follows.id = ?", (row["id"],))
     return {
         "id": row["id"], "series_name": row["series_name"], "season": row["season"], "title": row["title"],
         "mode": row["mode"], "quality": row["quality"], "location_id": row["location_id"],
-        "location": loc["name"] if loc else "?", "new_seasons": bool(row["new_seasons"]), "status": row["status"],
+        "location": row["location_name"] or "?", "new_seasons": bool(row["new_seasons"]), "status": row["status"],
         "airing_status": row["airing_status"], "next_episode": row["next_episode"],
         "next_airing_at": row["next_airing_at"], "last_checked": row["last_checked"],
         "next_check": row["next_check"], "last_new_at": row["last_new_at"], "last_result": row["last_result"],
-        "created_by": row["created_by"], "owner": owner["username"] if owner else "",
+        "created_by": row["created_by"], "owner": row["owner_name"] or "",
     }
 
 
 def all_follows() -> list[dict]:
-    return [to_dict(r) for r in db.query("SELECT * FROM follows ORDER BY series_name, season, title")]
+    return [to_dict(r) for r in db.query(_WITH_NAMES + " ORDER BY series_name, season, title")]
 
 
 async def create(entry: dict, series_name: str, location_id: int, mode: str, quality: str, created_by: int | None,
@@ -163,8 +167,8 @@ async def check(follow_id: int) -> str:
 
     skip = set(json.loads(row["skip_episodes"]))
     wanted = [e for e in available if e not in skip]
-    on_disk = jobs.existing_episodes(row["location_id"], row["series_name"], row["season"], row["title"], wanted,
-                                     row["episode_offset"])
+    on_disk = await asyncio.to_thread(jobs.existing_episodes, row["location_id"], row["series_name"], row["season"],
+                                      row["title"], wanted, row["episode_offset"])
     previous = {r["episode"]: r for r in db.query(
         "SELECT items.id, items.episode, items.status, items.updated_at FROM items "
         "JOIN batches ON batches.id = items.batch_id WHERE batches.follow_id = ? ORDER BY items.id", (follow_id,))}

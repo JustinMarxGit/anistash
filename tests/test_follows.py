@@ -41,7 +41,7 @@ def queued_episodes(follow_id):
 
 def release(monkeypatch, episodes):
     monkeypatch.setenv("FAKE_EPISODES", episodes)
-    anicli._cache.clear()
+    anicli.clear_cache()
 
 
 def test_only_new_episodes_are_queued_as_they_come_out(setup_done, monkeypatch):

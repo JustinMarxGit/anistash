@@ -42,8 +42,19 @@ def existing_episodes(location_id: int | None, series: str, season: int, title: 
     except locations.LocationError:
         return set()
     naming = db.get_setting("naming")
+    listings: dict[str, set[str]] = {}  # one listing per folder instead of a lookup per episode (slow on shares)
+
+    def present(path: str) -> bool:
+        folder, name = os.path.split(path)
+        if folder not in listings:
+            try:
+                listings[folder] = set(os.listdir(folder))
+            except OSError:
+                listings[folder] = set()
+        return name in listings[folder]
+
     return {e for e in episodes
-            if os.path.exists(str(episode_path(row["path"], series, season, e, title, naming, offset)) + ".mp4")}
+            if present(str(episode_path(row["path"], series, season, e, title, naming, offset)) + ".mp4")}
 
 
 def enqueue(series_name: str, location_id: int, mode: str, quality: str, entries: list[dict],
@@ -99,12 +110,37 @@ def enqueue(series_name: str, location_id: int, mode: str, quality: str, entries
     return {"added": added, "skipped_queued": skipped_queued, "skipped_existing": skipped_existing, "batches": batch_ids}
 
 
+_BOOT = f"{os.getpid()}.{time.time_ns()}"
+FINISHED_SHOWN = 50
+
+
+def revision() -> str:
+    """Changes whenever anything in the database changes, so an unchanged queue poll can be
+    answered without building the snapshot. (A change elsewhere only costs a full answer.)"""
+    conn = db.connect()
+    return f"{_BOOT}.{conn.execute('PRAGMA data_version').fetchone()[0]}.{conn.total_changes}"
+
+
+def counts() -> dict:
+    """Queued and running episodes, for the badge on the Downloads tab."""
+    rows = db.query("SELECT status, COUNT(*) AS n FROM items WHERE status IN ('queued', 'running') GROUP BY status")
+    found = {r["status"]: r["n"] for r in rows}
+    return {"queued": found.get("queued", 0), "running": found.get("running", 0)}
+
+
 def snapshot() -> list[dict]:
-    batches = db.query("SELECT batches.*, locations.name AS location_name, users.username AS owner FROM batches "
-                       "LEFT JOIN locations ON locations.id = batches.location_id "
-                       "LEFT JOIN users ON users.id = batches.created_by ORDER BY position")
-    items = db.query("SELECT id, batch_id, episode, status, progress, detail, error, dest, quality "
-                     "FROM items ORDER BY position, id")
+    """Active downloads plus the newest finished ones."""
+    batches = db.query(
+        "SELECT batches.*, locations.name AS location_name, users.username AS owner FROM batches "
+        "LEFT JOIN locations ON locations.id = batches.location_id "
+        "LEFT JOIN users ON users.id = batches.created_by "
+        "WHERE EXISTS (SELECT 1 FROM items WHERE items.batch_id = batches.id AND items.status IN ('queued', 'running')) "
+        "OR batches.id IN (SELECT id FROM batches b WHERE NOT EXISTS (SELECT 1 FROM items WHERE items.batch_id = b.id "
+        "AND items.status IN ('queued', 'running')) ORDER BY b.id DESC LIMIT ?) "
+        "ORDER BY position", (FINISHED_SHOWN,))
+    ids = [b["id"] for b in batches]
+    items = db.query("SELECT id, batch_id, episode, status, progress, detail, error, dest, quality FROM items "
+                     f"WHERE batch_id IN ({','.join('?' * len(ids))}) ORDER BY position, id", ids) if ids else []
     by_batch: dict[int, list] = {}
     for item in items:
         by_batch.setdefault(item["batch_id"], []).append(dict(item))
@@ -305,23 +341,27 @@ async def _run_item(item) -> None:
     shutil.rmtree(workdir, ignore_errors=True)
     workdir.mkdir(parents=True)
     _set_item(item_id, status="running", progress=0, detail="Finding stream…", error="")
-    last_write = 0.0
+    last_write = last_log = 0.0
     log_lines: list[str] = []
     current = {"label": ""}  # the quality being downloaded, shown before yt-dlp's progress
 
     def on_progress(percent, detail, line):
-        nonlocal last_write
+        nonlocal last_write, last_log
         log_lines.append(line)
         del log_lines[:-30]
         if time.monotonic() - last_write < 1 and percent != 100:
             return
+        # The log is only read after the episode ends, so it's saved now and then, not every second
+        fields = {"log": "\n".join(log_lines)} if time.monotonic() - last_log >= 10 else {}
+        if fields:
+            last_log = time.monotonic()
         last_write = time.monotonic()
-        fields = {"log": "\n".join(log_lines)}
         if percent is not None:
             fields["progress"] = percent
         if detail:
             fields["detail"] = f"{current['label']} · {detail}" if current["label"] else detail
-        _set_item(item_id, **fields)
+        if fields:
+            _set_item(item_id, **fields)
 
     try:
         location = locations.get(item["location_id"])
@@ -339,6 +379,7 @@ async def _run_item(item) -> None:
         target = episode_path(location["path"], item["series_name"], item["season"], item["episode"], item["title"],
                               naming, item["episode_offset"])
         video = await asyncio.to_thread(_move_into_place, outputs, str(target))
+        await asyncio.to_thread(library.add_episode, video, location["name"])
         _set_item(item_id, status="done", detail=note, dest=video, quality=quality_used, log="\n".join(log_lines))
         _after_done(item, video, location)
     except asyncio.CancelledError:
@@ -376,7 +417,6 @@ def rescan(batch_id: int) -> int:
 
 
 def _after_done(item, video: str | None, location) -> None:
-    library.invalidate()
     refresh = db.get_setting("media_refresh")
     if refresh == "off" or not video:
         return

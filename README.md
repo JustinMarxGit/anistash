@@ -162,6 +162,18 @@ AniStash doesn't scrape anything itself; it drives the installed `ani-cli`:
 
 When the site changes, `ani-cli -U` fixes AniStash too.
 
+### Speed
+
+Nearly all of a page's wait is the anime site and AniList answering, so AniStash avoids waiting on them in turn:
+
+- **Parallel lookups:** a show page starts each lookup as soon as its input is known. Searches that don't need AniList start straight away, and a season's episode list starts the moment a search finds it.
+- **Caching:** ani-cli answers are kept for 10 minutes, in memory and in SQLite, so they survive restarts. Identical lookups made at the same moment run once. At most 4 ani-cli lookups run at a time.
+- **AniList:** a season chain is fetched three relations deep per call, over one kept-alive connection.
+- **Downloads page:** polls with the queue's revision and gets a 60-byte "unchanged" answer when nothing moved, then patches rows in place.
+- **Polling pauses** while the tab is hidden.
+- **Static files** are gzipped. `app.js` and `app.css` are versioned, so browsers keep them until the next update.
+- **SQLite:** one connection per thread, WAL with `synchronous=NORMAL`, and indexes on the queue tables.
+
 ### Layout
 
 ```

@@ -14,7 +14,7 @@ import time
 
 import httpx
 
-from . import anicli, auth, config, db, locations, mediaserver, vault
+from . import anicli, auth, config, db, locations, mediaserver, net, vault
 
 STEPS = ["welcome", "admin", "locations", "mediaserver", "defaults", "finish"]
 QUALITIES = ["best", "1080", "720", "480", "360", "worst"]
@@ -50,9 +50,8 @@ async def latest_release() -> str:
     if row:
         return json.loads(row["value"])
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"https://api.github.com/repos/{config.REPO}/releases/latest",
-                                    headers={"Accept": "application/vnd.github+json"})
+        resp = await net.client("github", timeout=10).get(f"https://api.github.com/repos/{config.REPO}/releases/latest",
+                                                          headers={"Accept": "application/vnd.github+json"})
         tag = resp.json().get("tag_name", "") if resp.status_code == 200 else ""
     except httpx.HTTPError:
         return ""

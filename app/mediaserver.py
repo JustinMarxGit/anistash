@@ -15,7 +15,7 @@ import time
 
 import httpx
 
-from . import db, vault
+from . import db, net, vault
 
 DEBOUNCE = 30
 KINDS = ("none", "jellyfin", "plex")
@@ -54,8 +54,7 @@ async def _request(method: str, path: str, *, kind: str | None = None, url: str 
         headers = {"X-Plex-Token": token, "Accept": "application/json",
                    "X-Plex-Product": "anistash", "X-Plex-Client-Identifier": "anistash"}
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.request(method, url + path, headers=headers, **kwargs)
+        resp = await net.client("mediaserver").request(method, url + path, headers=headers, **kwargs)
     except httpx.HTTPError as exc:
         raise MediaServerError(f"Can't reach {_label(kind)} at {url}: {exc.__class__.__name__}") from exc
     if resp.status_code == 401:

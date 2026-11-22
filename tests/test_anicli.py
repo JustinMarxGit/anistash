@@ -65,3 +65,10 @@ def test_download_failure_is_readable(tmp_path):
 ])
 def test_parse_progress(line, expected):
     assert anicli.parse_progress(line) == expected
+
+
+def test_typographic_punctuation_is_made_plain(isolated, monkeypatch):
+    # The site answers HTTP 400 to "Journey’s"; AniList names use it
+    assert anicli._clean(" Frieren: Beyond Journey’s End ") == "Frieren: Beyond Journey's End"
+    assert anicli._clean("“Oshi no Ko” – Part 2…") == '"Oshi no Ko" - Part 2...'
+    assert anicli._clean("薬屋のひとりごと") == "薬屋のひとりごと"
