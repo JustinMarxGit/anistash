@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: System packages
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Python packages
+        run: pip install -r requirements.txt pytest pyflakes shellcheck-py
+      - name: Tests
+        run: python -m pytest -q
+      - name: Python lint
+        run: pyflakes app helper/anistash-helper tests
+      - name: Shell scripts
+        run: |
+          for f in ct/anistash.sh install/install.sh install/deploy.sh install/anistash-update install/anistash-setup app/menu_capture.sh; do bash -n "$f"; done
+          shellcheck -S warning ct/anistash.sh install/install.sh install/deploy.sh install/anistash-update install/anistash-setup app/menu_capture.sh tests/fake_ani_cli.sh
+      - name: Frontend syntax
+        run: node --check app/static/app.js

@@ -133,7 +133,7 @@ def parse_address(text: str) -> dict:
     match = _NFS_URL.match(text) or _NFS.match(text)
     if match:
         return {"type": "nfs", "server": match.group(1), "export": "/" + "/".join(_split_path(match.group(2) or "/"))}
-    raise LocationError("Enter an address like //10.10.1.3/share/folder (SMB) or 10.10.1.3:/export/path (NFS).")
+    raise LocationError("Enter an address like //192.168.1.10/share/folder (SMB) or 192.168.1.10:/export/path (NFS).")
 
 
 def _clean(data: dict) -> tuple[str, str, dict, str | None, str]:
@@ -152,13 +152,13 @@ def _clean(data: dict) -> tuple[str, str, dict, str | None, str]:
         cfg["subpath"] = "/".join(parts[1:] + _split_path(cfg["subpath"]))
         cfg["server"] = cfg["server"].strip("/\\")
         if not cfg["server"] or not cfg["share"]:
-            raise LocationError("Enter the share address, e.g. //10.10.1.3/share/folder.")
+            raise LocationError("Enter the share address, e.g. //192.168.1.10/share/folder.")
         password = data.get("password")
         password = password if password not in (None, "") else None
     elif kind == "nfs":
         cfg = {k: str(data.get(k) or "").strip() for k in NFS_FIELDS}
         if not cfg["server"] or not cfg["export"]:
-            raise LocationError("Enter the export address, e.g. 10.10.1.3:/mnt/pool/anime.")
+            raise LocationError("Enter the export address, e.g. 192.168.1.10:/mnt/pool/anime.")
         password = None
     elif kind == "local":
         path = os.path.normpath((data.get("path") or "").strip())
@@ -168,7 +168,7 @@ def _clean(data: dict) -> tuple[str, str, dict, str | None, str]:
     else:
         raise LocationError("Pick SMB, NFS or local folder.")
     if not name:
-        # Named after where it points, e.g. "anime on Data Store"
+        # Named after where it points, e.g. "anime on media"
         if kind == "smb":
             name = f"{cfg['subpath'].split('/')[-1]} on {cfg['share']}" if cfg["subpath"] else cfg["share"]
         else:
@@ -207,7 +207,7 @@ async def browse(data: dict) -> list[dict]:
     server = re.sub(r"^(?:smb|cifs|nfs)://|^[/\\]+", "", text, flags=re.IGNORECASE)
     server = re.split(r"[/\\]|:/", server, maxsplit=1)[0]
     if not server:
-        raise LocationError("Enter the server's address first (e.g. 10.10.1.3).")
+        raise LocationError("Enter the server's address first (e.g. 192.168.1.10).")
     payload = {"type": kind, "server": server, "suggest": bool(data.get("suggest"))}
     if kind == "smb":
         payload.update(_smb_login(data))

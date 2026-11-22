@@ -11,7 +11,7 @@ def run(coro):
 
 @pytest.fixture
 def media(isolated):
-    run(locations.create({"name": "anime on Data Store", "type": "local", "path": str(isolated / "media")}))
+    run(locations.create({"name": "anime on media", "type": "local", "path": str(isolated / "media")}))
     root = isolated / "media"
     for folder, season, count in (("Blue Box (2024)", "Season 01", 25), ("Blue Box (2024)", "Season 02", 7),
                                   ("Frieren - Beyond Journey’s End (2023)", "Season 01", 3)):
@@ -34,7 +34,7 @@ def test_matches_folders_by_series_name(media):
         {"id": 6, "titles": ["Something Else"]},
     ]))
     assert matches["1"]["seasons"] == {"1": 25, "2": 7} and matches["1"]["episodes"] == 32
-    assert matches["1"]["locations"] == ["anime on Data Store"]
+    assert matches["1"]["locations"] == ["anime on media"]
     assert matches["2"]["season"] == 2 and matches["2"]["season_episodes"] == 7
     assert matches["3"]["season"] == 3 and matches["3"]["season_episodes"] == 0  # the series, not that season
     assert matches["4"]["episodes"] == 3  # curly apostrophe, " - " and year don't matter

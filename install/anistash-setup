@@ -75,11 +75,11 @@ add_location() {
         smb)
             user="$(input "Username for the share (blank for guest):")" || return 1
             pw="$(secret "Password:")" || return 1
-            address="$(input "Share address: server, share, then any folder inside it.\nExample: //10.10.1.3/media/anime (missing folders are created)" "//")" || return 1
+            address="$(input "Share address: server, share, then any folder inside it.\nExample: //192.168.1.10/media/anime (missing folders are created)" "//")" || return 1
             spec="$(json name "$name" type smb address "$address" username "$user" password "$pw" vers default)"
             ;;
         nfs)
-            address="$(input "Export address: server, a colon, then the folder.\nExample: 10.10.1.3:/mnt/pool/media/anime")" || return 1
+            address="$(input "Export address: server, a colon, then the folder.\nExample: 192.168.1.10:/mnt/pool/media/anime")" || return 1
             spec="$(json name "$name" type nfs address "$address")"
             ;;
         local)

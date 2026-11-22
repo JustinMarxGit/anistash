@@ -1990,7 +1990,7 @@ function locationForm(loc = null, networkShares = true, { wizard = false } = {})
         <input type="hidden" name="type" value="${type}">
       </div>`}
       <div data-fields="smb" ${type === "smb" ? "" : "hidden"}>
-        <label class="field"><span>NAS address</span><input type="text" name="server" value="${esc(type === "smb" ? c.server || "" : "")}" placeholder="10.10.1.3" autocapitalize="off" spellcheck="false" inputmode="url"></label>
+        <label class="field"><span>NAS address</span><input type="text" name="server" value="${esc(type === "smb" ? c.server || "" : "")}" placeholder="192.168.1.10" autocapitalize="off" spellcheck="false" inputmode="url"></label>
         <div class="grid2">
           <label class="field"><span>Username</span><input type="text" name="username" value="${esc(c.username || "")}" autocapitalize="off" autocomplete="off" placeholder="blank for guest"></label>
           <label class="field"><span>Password</span><input type="password" name="password" autocomplete="new-password" placeholder="${loc ? "Leave blank to keep" : ""}"></label>
@@ -2000,7 +2000,7 @@ function locationForm(loc = null, networkShares = true, { wizard = false } = {})
         <div class="browser" data-browser></div>
         <details class="more"><summary>Type the share address yourself, or more options</summary>
           <label class="field" style="margin-top:.75rem"><span>Share address</span>
-            <input type="text" name="address" value="${esc(locationAddress("smb", type === "smb" ? c : {}))}" placeholder="//10.10.1.3/media/anime" autocapitalize="off" spellcheck="false">
+            <input type="text" name="address" value="${esc(locationAddress("smb", type === "smb" ? c : {}))}" placeholder="//192.168.1.10/media/anime" autocapitalize="off" spellcheck="false">
             <div class="hint">Server, share, then any folder inside it. Missing folders are created.</div></label>
           <div class="grid2">
             <label class="field"><span>Domain</span><input type="text" name="domain" value="${esc(c.domain || "")}" autocapitalize="off"></label>
@@ -2010,7 +2010,7 @@ function locationForm(loc = null, networkShares = true, { wizard = false } = {})
       </div>
       <div data-fields="nfs" ${type === "nfs" ? "" : "hidden"}>
         <label class="field"><span>Export address</span>
-          <input type="text" name="nfs_address" value="${esc(locationAddress("nfs", type === "nfs" ? c : {}))}" placeholder="10.10.1.3:/mnt/pool/media/anime" autocapitalize="off" spellcheck="false">
+          <input type="text" name="nfs_address" value="${esc(locationAddress("nfs", type === "nfs" ? c : {}))}" placeholder="192.168.1.10:/mnt/pool/media/anime" autocapitalize="off" spellcheck="false">
           <div class="hint">Server, a colon, then the exported folder (or a folder inside it).</div>
           <div class="hint" data-preview></div></label>
         <button type="button" class="small" data-browse>Find exports on this server</button>

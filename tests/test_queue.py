@@ -349,11 +349,11 @@ def test_ambiguous_libraries_still_scan_nothing(isolated, monkeypatch):
 
 
 @pytest.mark.parametrize("text, expected", [
-    ("//10.10.1.3/datastore/jellyfin/anime",
-     {"type": "smb", "server": "10.10.1.3", "share": "datastore", "subpath": "jellyfin/anime"}),
+    ("//192.168.1.10/datastore/jellyfin/anime",
+     {"type": "smb", "server": "192.168.1.10", "share": "datastore", "subpath": "jellyfin/anime"}),
     ("\\\\nas\\media\\anime", {"type": "smb", "server": "nas", "share": "media", "subpath": "anime"}),
     ("smb://nas.lan/media/", {"type": "smb", "server": "nas.lan", "share": "media", "subpath": ""}),
-    ("10.10.1.3:/mnt/pool/anime/", {"type": "nfs", "server": "10.10.1.3", "export": "/mnt/pool/anime"}),
+    ("192.168.1.10:/mnt/pool/anime/", {"type": "nfs", "server": "192.168.1.10", "export": "/mnt/pool/anime"}),
     ("nfs://nas/export", {"type": "nfs", "server": "nas", "export": "/export"}),
 ])
 def test_parse_address(text, expected):
@@ -367,15 +367,15 @@ def test_parse_address_rejects(text):
 
 
 def test_share_box_path_is_split_into_share_and_folder():
-    # What was typed in v0.1.0's Share box: server 10.10.1.3, share "/datastore/jellyfin/anime"
-    _, _, cfg, _, _ = locations._clean({"name": "x", "type": "smb", "server": "10.10.1.3",
+    # What was typed in v0.1.0's Share box: server 192.168.1.10, share "/datastore/jellyfin/anime"
+    _, _, cfg, _, _ = locations._clean({"name": "x", "type": "smb", "server": "192.168.1.10",
                                          "share": "/datastore/jellyfin/anime"})
     assert (cfg["share"], cfg["subpath"]) == ("datastore", "jellyfin/anime")
 
 
 def test_address_type_mismatch_is_explained():
     with pytest.raises(locations.LocationError, match="NFS"):
-        locations._clean({"name": "x", "type": "smb", "address": "10.10.1.3:/mnt/anime"})
+        locations._clean({"name": "x", "type": "smb", "address": "192.168.1.10:/mnt/anime"})
 
 
 def _helper_module():
@@ -390,11 +390,11 @@ def _helper_module():
 
 
 def test_share_address_with_encoded_space():
-    assert locations.parse_address("//10.10.1.3/Data%20Store/jellyfin/anime") == {
-        "type": "smb", "server": "10.10.1.3", "share": "Data Store", "subpath": "jellyfin/anime"}
+    assert locations.parse_address("//192.168.1.10/Media%20Store/jellyfin/anime") == {
+        "type": "smb", "server": "192.168.1.10", "share": "Media Store", "subpath": "jellyfin/anime"}
 
 
-@pytest.mark.parametrize("name", ["Data Store", "media", "anime$", "Café-Media_2", "My.Share (old)"])
+@pytest.mark.parametrize("name", ["Media Store", "media", "anime$", "Café-Media_2", "My.Share (old)"])
 def test_helper_accepts_real_share_names(name):
     assert _helper_module().check_share(name) == name
 
@@ -410,24 +410,24 @@ def test_helper_rejects_names_smb_forbids(name, shown):
 
 SMB_LS = {
     # one smbclient session per share; several ls commands print one block each
-    ("//10.10.1.3/Data Store", 'ls "*"'):
+    ("//192.168.1.10/Media Store", 'ls "*"'):
         "  .                                   D        0  Sat Nov 22 10:00:00 2026\n"
         "  ..                                  D        0  Sat Nov 22 10:00:00 2026\n"
         "  jellyfin                            D        0  Sat Nov  2 10:00:00 2026\n"
         "  backups                             D        0  Sat Nov  2 10:00:00 2026\n"
         "  notes.txt                           A      120  Sat Nov  2 10:00:00 2026\n"
         "\n\t\t3907018584 blocks of size 1024. 1000 blocks available\n",
-    ("//10.10.1.3/Data Store", 'ls "jellyfin\\*"; ls "backups\\*"'):
+    ("//192.168.1.10/Media Store", 'ls "jellyfin\\*"; ls "backups\\*"'):
         "  movies                              D        0  Sat Nov  2 10:00:00 2026\n"
         "  anime                               D        0  Sat Nov  2 10:00:00 2026\n"
         "  Anime Movies                        D        0  Sat Nov  2 10:00:00 2026\n"
         "\n\t\t3907018584 blocks of size 1024. 1000 blocks available\n"
         "  2025                                D        0  Sat Nov  2 10:00:00 2026\n"
         "\n\t\t3907018584 blocks of size 1024. 1000 blocks available\n",
-    ("//10.10.1.3/photos", 'ls "*"'):
+    ("//192.168.1.10/photos", 'ls "*"'):
         "  2024                                D        0  Sat Nov  2 10:00:00 2026\n"
         "\n\t\t3907018584 blocks of size 1024. 1000 blocks available\n",
-    ("//10.10.1.3/photos", 'ls "2024\\*"'):
+    ("//192.168.1.10/photos", 'ls "2024\\*"'):
         "\n\t\t3907018584 blocks of size 1024. 1000 blocks available\n",
 }
 
@@ -440,10 +440,10 @@ def test_helper_finds_anime_folder(monkeypatch):
         return subprocess.CompletedProcess([], 0, SMB_LS[(target, commands)], "")
 
     monkeypatch.setattr(helper, "_smbclient", fake_smbclient)
-    found = helper._find_anime({}, "10.10.1.3", ["Data Store", "photos"])
-    assert found == [{"share": "Data Store", "path": ["jellyfin", "anime"]},
-                     {"share": "Data Store", "path": ["jellyfin", "Anime Movies"]}]
-    listing, error = helper._list_dirs({}, "10.10.1.3", "Data Store", [[]])
+    found = helper._find_anime({}, "192.168.1.10", ["Media Store", "photos"])
+    assert found == [{"share": "Media Store", "path": ["jellyfin", "anime"]},
+                     {"share": "Media Store", "path": ["jellyfin", "Anime Movies"]}]
+    listing, error = helper._list_dirs({}, "192.168.1.10", "Media Store", [[]])
     assert listing == [["jellyfin", "backups"]] and error is None
 
 

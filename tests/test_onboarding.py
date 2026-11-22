@@ -64,9 +64,9 @@ def test_upgrading_database_skips_the_tour_for_existing_users(isolated):
     conn.execute("DROP TABLE users")
     conn.execute("ALTER TABLE users_old RENAME TO users")
     conn.execute("INSERT INTO users (id, username, password_hash, role, disabled, must_change_password, created_at, "
-                 "last_login_at) VALUES (1, 'justin', 'x', 'admin', 0, 0, 0, 0)")
+                 "last_login_at) VALUES (1, 'kai', 'x', 'admin', 0, 0, 0, 0)")
     conn.commit()
     conn.close()
     db.init()
-    row = db.query_one("SELECT tour_done, last_seen_version FROM users WHERE username = 'justin'")
+    row = db.query_one("SELECT tour_done, last_seen_version FROM users WHERE username = 'kai'")
     assert row["tour_done"] == 1 and row["last_seen_version"] == ""

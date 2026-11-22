@@ -92,7 +92,7 @@ fi
 
 if [[ -z $branch && $want == "$current" ]]; then
     ok "anistash $current is the newest release."
-    [[ $check_only -eq 1 ]] || progress done "" "AniStash $current is already the newest release."
+    [[ $check_only -eq 1 ]] || progress "done" "" "AniStash $current is already the newest release."
     exit 0
 fi
 if [[ $check_only -eq 1 ]]; then
@@ -147,7 +147,7 @@ done
 curl -fs "http://127.0.0.1:$PORT/api/status" >/dev/null || false  # not up after 30s: roll back
 trap - ERR
 ok "anistash is now on v$(cat "$APP/VERSION") ($(git -C "$APP" describe --tags --always))"
-progress done "" "AniStash is now on v$(cat "$APP/VERSION")."
+progress "done" "" "AniStash is now on v$(cat "$APP/VERSION")."
 
 info "Updating ani-cli and yt-dlp"
 "/usr/local/lib/anistash/anistash-helper" update-tools >/dev/null && ok "Tools updated" || warn "Tool update failed (anistash still works; try again later)"

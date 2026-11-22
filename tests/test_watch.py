@@ -67,7 +67,7 @@ def jellyfin_items(query):
 @pytest.fixture
 def jellyfin(isolated):
     server, seen = fake_server({
-        "/Users": [{"Id": "u1", "Name": "Justin"}, {"Id": "u2", "Name": "Sam"}],
+        "/Users": [{"Id": "u1", "Name": "Kai"}, {"Id": "u2", "Name": "Sam"}],
         "/Users/u1/Items": jellyfin_items,
     })
     db.set_settings(media_server="jellyfin", media_url=f"http://127.0.0.1:{server.server_port}",
@@ -79,7 +79,7 @@ def jellyfin(isolated):
 @pytest.fixture
 def plex(isolated):
     server, seen = fake_server({
-        "/accounts": {"MediaContainer": {"Account": [{"id": 0, "name": ""}, {"id": 1, "name": "justin"},
+        "/accounts": {"MediaContainer": {"Account": [{"id": 0, "name": ""}, {"id": 1, "name": "kai"},
                                                      {"id": 7, "name": "guest"}]}},
         "/status/sessions/history/all": {"MediaContainer": {"Metadata": [
             {"type": "episode", "grandparentTitle": "Frieren", "ratingKey": "100", "viewedAt": int(NOW - DAY)},
@@ -95,7 +95,7 @@ def plex(isolated):
 
 
 def test_jellyfin_accounts_and_history(jellyfin):
-    assert run(mediaserver.server_users()) == [{"id": "u1", "name": "Justin"}, {"id": "u2", "name": "Sam"}]
+    assert run(mediaserver.server_users()) == [{"id": "u1", "name": "Kai"}, {"id": "u2", "name": "Sam"}]
     history = run(mediaserver.watch_history("u1"))
     assert history["Frieren"]["episodes"] == 3 and abs(history["Frieren"]["last"] - (NOW - 2 * DAY)) < 2
     assert history["Blue Box"]["favorite"] is True and history["Blue Box"]["episodes"] == 0
@@ -104,7 +104,7 @@ def test_jellyfin_accounts_and_history(jellyfin):
 
 
 def test_plex_accounts_and_history(plex):
-    assert run(mediaserver.server_users()) == [{"id": "1", "name": "justin"}, {"id": "7", "name": "guest"}]
+    assert run(mediaserver.server_users()) == [{"id": "1", "name": "kai"}, {"id": "7", "name": "guest"}]
     history = run(mediaserver.watch_history("1"))
     assert history == {"Frieren": {"episodes": 2, "last": float(int(NOW - DAY)), "favorite": False}}
     query = [q for path, q in plex if path == "/status/sessions/history/all"][0]
@@ -131,9 +131,9 @@ def test_watching_outweighs_owning():
 
 
 def test_accounts_are_matched_by_username(jellyfin):
-    user_id = auth.create_user("justin", "correct horse battery", "admin")
+    user_id = auth.create_user("kai", "correct horse battery", "admin")
     account = run(recommend.linked_account(auth.get_user(user_id)))
-    assert account == {"id": "u1", "name": "Justin"}
+    assert account == {"id": "u1", "name": "Kai"}
     assert auth.get_user(user_id)["media_user_id"] == "u1"  # remembered
     other = auth.create_user("nobody", "correct horse battery", "member")
     assert run(recommend.linked_account(auth.get_user(other))) is None
@@ -160,7 +160,7 @@ def test_linking_rules(jellyfin):
     assert member.get("/api/mediaserver/accounts").json()["off"] is True
     admin = login("boss", "correct horse battery")
     assert admin.put(f"/api/users/{member_id}/media-user", json={"account_id": "u1"}).status_code == 200
-    assert auth.get_user(member_id)["media_user_name"] == "Justin"
+    assert auth.get_user(member_id)["media_user_name"] == "Kai"
 
     setup.save_media_server("plex", "http://127.0.0.1:1", "T")  # another server: links no longer mean anything
     assert auth.get_user(member_id)["media_user_id"] == ""
@@ -188,8 +188,8 @@ def test_watched_shows_drive_picks_with_reason():
 
 def test_picks_still_work_when_the_server_is_down(isolated, monkeypatch):
     db.set_settings(media_server="jellyfin", media_url="http://127.0.0.1:1", media_token="KEY", media_library_id="x")
-    user_id = auth.create_user("justin", "correct horse battery", "admin")
-    db.execute("UPDATE users SET media_user_id = 'u1', media_user_name = 'Justin' WHERE id = ?", (user_id,))
+    user_id = auth.create_user("kai", "correct horse battery", "admin")
+    db.execute("UPDATE users SET media_user_id = 'u1', media_user_name = 'Kai' WHERE id = ?", (user_id,))
 
     async def scored():
         return {"items": [], "related": {}}
@@ -203,4 +203,4 @@ def test_picks_still_work_when_the_server_is_down(isolated, monkeypatch):
     db.execute("INSERT INTO follows (series_name, season, query, result_index, title, mode, quality, location_id, "
                "created_by, created_at) VALUES ('Blue Box', 1, 'q', 1, 'Blue Box', 'sub', 'best', 1, ?, 0)", (user_id,))
     result = run(recommend.for_you(auth.get_user(user_id)))
-    assert result["based_on"] == {"shows": 1, "watched": 0, "server": "", "account": "Justin"}
+    assert result["based_on"] == {"shows": 1, "watched": 0, "server": "", "account": "Kai"}

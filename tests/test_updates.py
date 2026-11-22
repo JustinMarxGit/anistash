@@ -137,3 +137,10 @@ def test_check_for_updates_skips_the_cache(isolated, monkeypatch):
     assert run(updates.setup.latest_release()) == "v1.0.0"
     assert run(updates.setup.latest_release()) == "v1.0.0"  # cached
     assert run(updates.setup.latest_release(fresh=True)) == "v2.0.0"
+
+
+def test_version_order_across_major_and_two_digit_minor():
+    assert updates.setup._newer("v1.0.0", "0.10.6")
+    assert updates.setup._newer("v0.10.0", "0.9.1")  # 10 > 9, not "1" < "9"
+    assert not updates.setup._newer("v0.10.6", "1.0.0")
+    assert not updates.setup._newer("v1.0.0", "1.0.0")

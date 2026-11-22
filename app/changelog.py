@@ -5,6 +5,18 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "1.0.0",
+        "title": "AniStash 1.0",
+        "items": [
+            "AniStash is now a public 1.0 release: free and open source under the GPL-3.0 license, for anyone who "
+            "wants an anime companion for Jellyfin or Plex.",
+            "Nothing changes for you: your settings, users, follows and downloads carry over as they are.",
+            "Final polish: clearer README with screenshots, backup and uninstall steps, a security policy, and "
+            "automatic tests on every change.",
+            "AniStash was made with Claude Code, Anthropic's AI coding assistant. The README explains how.",
+        ],
+    },
+    {
         "version": "0.10.6",
         "title": "Cleaner spotlight on phones",
         "items": ["On phones the spotlight on Browse shows less on top of the artwork: a shorter details line, "

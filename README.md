@@ -1,29 +1,73 @@
 # AniStash
 
-A self-hosted web UI for [ani-cli](https://github.com/pystardust/ani-cli). Browse and search anime from your phone or desktop, pick whole series, seasons or single episodes, and download them to your NAS. Files are named the way Jellyfin and Plex expect, and only your anime library gets scanned afterwards.
+[![tests](https://github.com/JustinMarxGit/anistash/actions/workflows/tests.yml/badge.svg)](https://github.com/JustinMarxGit/anistash/actions/workflows/tests.yml)
+[![release](https://img.shields.io/github/v/release/JustinMarxGit/anistash)](https://github.com/JustinMarxGit/anistash/releases)
+[![license: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
-AniStash runs in its own Proxmox LXC, created with one command on the Proxmox host.
+**A self-hosted companion for Jellyfin and Plex that grows your anime library.** Browse and discover anime in a
+friendly web app, pick whole series, seasons or single episodes, and AniStash downloads them (through
+[ani-cli](https://github.com/pystardust/ani-cli)) straight to your NAS: named, checked and organised the way
+Jellyfin and Plex expect, with only your anime library rescanned afterwards. Follow a show and new episodes arrive
+by themselves.
+
+It runs in its own Proxmox LXC, created with one command, and works on phones as well as desktops.
+
+> **Made with AI:** AniStash was written with [Claude Code](https://claude.com/claude-code), Anthropic's AI coding
+> assistant, directed, reviewed and tested by its maintainer. See [How AniStash was made](#how-anistash-was-made).
+
+<p align="center">
+  <img src="docs/screenshots/browse-desktop.jpg" alt="Browse: the trending spotlight, genres and Best this season" width="72%">
+  <img src="docs/screenshots/browse-phone.jpg" alt="Browse on a phone" width="22%">
+</p>
+
+| Discover by genre | An anime's page | Picking episodes | Downloads |
+| --- | --- | --- | --- |
+| ![Discover](docs/screenshots/discover.jpg) | ![Anime page](docs/screenshots/anime-page.jpg) | ![Show page](docs/screenshots/show-page.jpg) | ![Downloads](docs/screenshots/downloads.jpg) |
+
+**Contents:** [Features](#features) · [Requirements](#requirements) · [Install](#install) · [Setup](#setup) ·
+[Discover](#discover) · [Recommendations](#recommendations) · [Following shows](#following-shows) ·
+[Users and security](#users-and-security) · [Updates](#updates) · [Backup, restore and uninstall](#backup-restore-and-uninstall) ·
+[FAQ](#faq) · [Troubleshooting](#troubleshooting) · [How AniStash was made](#how-anistash-was-made) ·
+[Disclaimer](#disclaimer) · [License](#license)
 
 ## Features
 
-- **Browse and search**: a featured show, the trending top 10 and this season's anime (artwork from AniList). Search finds a show by its **English or Japanese name**, and an **EN / JA** switch shows every title in the language you prefer.
-- **Seasons**: a show's seasons are grouped automatically, including "Season 3 Part 2" and "Final Season". Queue every season at once, one season, or specific episodes (`1-5, 8, 12-`).
-- **Sub, dub, or both**: download either, or **Sub + Dub** to get one file with both Japanese and English audio (labelled), so you can switch language in Jellyfin or Plex's audio menu. You choose which plays first.
-- **Already in your library**: posters, search results and show pages show **✓ In library**, with seasons and episode counts. This covers your download folders and your Jellyfin/Plex anime library.
-- **Explains itself**: hover over any button, or long-press it on a phone, to see what it does.
-- **Follow shows**: tap *Follow* on a show and every new episode downloads by itself as it comes out, including new seasons. Checks are timed around each broadcast using AniList's airing schedule.
-- **Highest quality with fallback**: each episode downloads at the best quality offered. If that download fails or comes out broken, AniStash tries the next quality down, then the next.
-- **Files Jellyfin and Plex play directly**: every download is checked with ffprobe and remuxed (no re-encode) to a clean MP4 with faststart. Subtitles are converted to `.en.srt`. Layout: `Show (2013)/Season 01/Show (2013) - S01E01.mp4`.
-- **Download locations**: add SMB or NFS shares, or local folders, from the UI. Each one is mounted, write-tested and remounted at boot. Pick one per download.
-- **Jellyfin or Plex scans of the anime library only**: when a season finishes, AniStash scans just the new folders, or at most your chosen anime library. It never triggers a full scan.
-- **Phone-friendly**: works on a phone and can be added to the home screen as an app.
-- **Queue**: per-episode progress, cancel, retry and reorder. Episodes already on disk are skipped.
-- **Updates**: automatic if you like (admins choose in setup or Settings → System). Otherwise admins see a banner with *Update now*. After every update, each person sees a short *What's new*. ani-cli and yt-dlp update themselves weekly.
-- **Guided tour**: new users get a one-minute tour of the app. Replay it under Settings → Your account.
+- **Browse like a streaming app:** a rotating spotlight of what's trending, *Best this season*, *Picked for you*,
+  trending and seasonal rows, and genre shortcuts. On phones you can flick the spotlight away with your thumb.
+- **Discover:** every anime by genre (combine several), sorted by popular, top rated, trending or newest, filtered
+  by type, status and year. **Surprise me** opens a random, well-liked show.
+- **Anime pages:** synopsis, score, studio, genres, *Same story* (prequels, sequels) and *More like this*.
+- **Recommendations:** *Best this season* combines **MyAnimeList, AniList and Kitsu** ratings with what's popular on
+  the anime site. *Picked for you* learns from what each person **watches in Jellyfin or Plex** and has in the
+  library, and says why ("Because you watched Frieren").
+- **Search by English or Japanese name**, with an EN / JA switch for every title.
+- **Seasons done right:** a show's seasons are grouped automatically (including "Season 3 Part 2" and "Final
+  Season"). Queue every season at once, one season, or specific episodes (`1-5, 8, 12-`).
+- **Sub, dub, or both:** **Sub + Dub** gives one file with Japanese and English audio, switchable in your player.
+- **Highest quality with fallback:** the best quality offered, stepping down if a download fails or comes out broken.
+- **Files your media server plays directly:** checked with ffprobe, remuxed (no re-encode) to MP4 with subtitles as
+  `.en.srt`, in `Show (2013)/Season 01/Show (2013) - S01E01.mp4`.
+- **Library-aware:** *✓ In library* badges from your download folders and your Jellyfin/Plex library.
+- **Scans only what's new:** Jellyfin/Plex is asked to scan just the new folders, or at most your anime library.
+  Never a full scan.
+- **Follow shows:** new episodes (and new seasons) download by themselves, timed around each broadcast.
+- **Download locations:** SMB or NFS shares, or local folders, added and tested from the web UI.
+- **Multi-user:** admin, member and viewer roles, with careful security (see below).
+- **Updates from the web page:** one click (or automatically), with live progress and automatic rollback.
+- **Explains itself:** every button has a plain-language tooltip, and new users get a short guided tour.
 
-## Install (Proxmox VE)
+## Requirements
 
-On the Proxmox host shell, as root:
+- **Proxmox VE** (8 or newer) on an **amd64** host, with internet access. The script creates a Debian LXC
+  (2 cores, 1 GB RAM and 8 GB disk by default; downloads go to your NAS, not the container).
+- **Somewhere to keep the anime:** an SMB or NFS share on your NAS, or a folder in the container.
+- **Optional:** Jellyfin or Plex, for library scans, *✓ In library* badges and watch-history recommendations.
+
+Not on Proxmox? The installer also works inside any Debian 12/13 machine or container (see below).
+
+## Install
+
+On the Proxmox VE host's shell, as root:
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/JustinMarxGit/anistash/main/ct/anistash.sh)"
@@ -141,8 +185,8 @@ For access from outside your home network, put AniStash behind a reverse proxy w
 
 ## Updates
 
-- **Automatic** (Settings → System, or the setup wizard / `anistash-setup`): AniStash checks GitHub for a new release every 30 minutes. It installs it only while nothing is downloading. If the new version doesn't start, the previous one is put back, and that version isn't retried for 12 hours.
-- **From the web UI**: admins get *Update now* in the banner that appears when a new version is out, and *Update AniStash* under Settings → System. *Check for updates* there asks GitHub straight away instead of waiting for the next check.
+- **Automatic** (Settings → Updates, the setup wizard, or `anistash-setup`): AniStash checks GitHub for a new release every 30 minutes. It installs it only while nothing is downloading. If the new version doesn't start, the previous one is put back, and that version isn't retried for 12 hours.
+- **From the web UI**: admins get *Update now* in the banner that appears when a new version is out, and the **Updates** card at the top of Settings, whose *Check for updates* asks GitHub straight away instead of waiting for the next check.
   - Either button runs `anistash-update` and shows each step as it happens: download, install, restart.
   - When the new version is up, the page reloads by itself.
   - If the update fails, the window says why; the previous version has already been put back.
@@ -150,6 +194,31 @@ For access from outside your home network, put AniStash behind a reverse proxy w
 - **In the container**: run `anistash-update`.
 - Only **admins** can see or start updates; the server refuses anyone else.
 - Each person sees a short **What's new** the first time they open AniStash after an update.
+
+## Backup, restore and uninstall
+
+- **What to back up:** `/var/lib/anistash` (database: users, settings, queue, follows) and `/etc/anistash`
+  (encryption key and SMB credentials). Your downloaded anime lives on your NAS and isn't touched by AniStash
+  except to add new files. A Proxmox backup of the container (`vzdump`) covers everything.
+- **Restore:** install AniStash, stop it (`systemctl stop anistash`), copy both folders back, then
+  `systemctl start anistash`.
+- **Uninstall:** on the Proxmox host, `pct stop <id> && pct destroy <id>`. Files already downloaded to your NAS
+  stay where they are.
+
+## FAQ
+
+- **Why is the container privileged?** An unprivileged LXC can't mount SMB/NFS shares itself. Prefer
+  unprivileged? Mount the share on the Proxmox host, bind-mount it into the container, and add it in AniStash as a
+  *local folder*. Everything else works the same.
+- **Where do the videos come from?** AniStash doesn't host or stream anything. It runs
+  [ani-cli](https://github.com/pystardust/ani-cli), which fetches episodes from a third-party anime site. See the
+  [Disclaimer](#disclaimer).
+- **Do I need a MyAnimeList account?** No. MAL scores come from Jikan (a public mirror) when it's up. For reliable
+  MAL scores, add a free MAL Client ID under Settings → Ratings.
+- **Can my family use it?** Yes. Add them under Settings → Users as *member* (can download) or *viewer* (browse
+  only). Each person gets their own *Picked for you* from their own Jellyfin/Plex watching.
+- **Can I reach it from outside my home?** Use a VPN (WireGuard, Tailscale) or a reverse proxy with HTTPS and
+  authentication in front of it. Don't expose it to the internet directly.
 
 ## Console commands (inside the LXC)
 
@@ -162,18 +231,17 @@ For access from outside your home network, put AniStash behind a reverse proxy w
 | `anistash-update --check` | Only check for an update |
 | `anistash-update --version v0.1.0` | Install a specific release |
 | `anistash-update --branch main` | Follow the development branch |
-| `journalctl -u AniStash -f` | Live logs |
+| `journalctl -u anistash -f` | Live logs |
 
 Settings, locations and the queue survive updates. The web UI port is set in `/etc/anistash/anistash.env`.
 
 ## Troubleshooting
 
-- **Searches fail or return nothing**: the anime site probably changed. Click Settings → System → *Update ani-cli and yt-dlp*. This also runs weekly on its own.
+- **Searches fail or return nothing**: the anime site probably changed. Click Settings → Tools → *Update ani-cli and yt-dlp*. This also runs weekly on its own.
 - **A location shows "Not mounted"**: click *Test*, which remounts it and shows the error from the NAS. Check that the share allows the user you entered to write.
 - **A download shows "scan failed"**: the file is downloaded fine; only the Jellyfin/Plex notification failed. Check the URL, key or token and the chosen library under Settings → Media server.
-
 - **A Sub + Dub episode only has Japanese audio**: when the dub can't be added (not uploaded yet, a different length, or the site serving the Japanese audio again), the episode is still saved with Japanese audio, and the queue says why.
-- **A dub download has Japanese audio**: AniStash asks ani-cli for the dub correctly (`--dub`), but with ani-cli 5.1.5 its current anime site sometimes hands back the sub stream for dubs. Run *Update ani-cli* under Settings → System; once ani-cli fixes it upstream, dubs come through without any change in AniStash.
+- **A dub download has Japanese audio**: AniStash asks ani-cli for the dub correctly (`--dub`), but with ani-cli 5.1.5 its current anime site sometimes hands back the sub stream for dubs. Run *Update ani-cli and yt-dlp* under Settings → Tools; once ani-cli fixes it upstream, dubs come through without any change in AniStash.
 
 ## Development
 
@@ -211,8 +279,39 @@ Nearly all of a page's wait is the anime site and AniList answering, so AniStash
 
 ```
 ct/anistash.sh          Proxmox host script (creates the LXC)
-install/             in-container installer, deploy step, anistash-setup, anistash-update, systemd units
+install/                in-container installer, deploy step, anistash-setup, anistash-update, systemd units
 helper/anistash-helper  root helper (mounts, tool updates); the only thing the app may sudo
-app/                 FastAPI backend and the static frontend (app/static)
-tests/               pytest suite
+app/                    FastAPI backend (Python) and the frontend (plain JavaScript, no build step)
+tests/                  pytest suite (run by GitHub Actions on every push)
+docs/screenshots/       the pictures in this README
 ```
+
+Contributions are welcome: open an issue first for anything big. Run the tests before a pull request.
+
+## How AniStash was made
+
+AniStash was built with generative AI. Its code, tests and documentation were written with
+**[Claude Code](https://claude.com/claude-code)**, Anthropic's AI coding assistant, working from the maintainer's
+requests and feedback over many iterations. The maintainer decided what to build, reviewed the results, ran it on a
+real Proxmox, NAS and Jellyfin setup, and reported what needed fixing.
+
+What that means for you:
+
+- **It's tested, not just generated:** over 170 automated tests run on every change (GitHub Actions), and each
+  feature was also checked in a real browser on desktop and phone sizes.
+- **Read it like any homelab project:** it's open source, so you can see exactly what it does before you run it,
+  especially the parts that run as root (`helper/anistash-helper`, the install scripts).
+- **Found a problem?** Please open an issue, or report security issues privately (see [SECURITY.md](SECURITY.md)).
+
+## Disclaimer
+
+AniStash is a front end for [ani-cli](https://github.com/pystardust/ani-cli). It doesn't host, store or distribute
+any video, and it isn't affiliated with ani-cli, the sites ani-cli uses, AniList, MyAnimeList, Kitsu, Jellyfin or
+Plex. **You are responsible for what you download and for following the copyright laws where you live.** Where
+possible, support the creators by watching anime through official, licensed services.
+
+## License
+
+AniStash is free and open source software under the **[GNU General Public License v3.0](LICENSE)**. You may use,
+study, share and change it, for free; versions you share must stay under the same license. The bundled fonts
+(Bricolage Grotesque, Onest) are under the SIL Open Font License (see `app/static/fonts/`).
