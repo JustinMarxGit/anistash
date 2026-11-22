@@ -119,6 +119,18 @@ defaults() {
     IPV6="${IPV6:-auto}"
     GATE6="${GATE6:-}"
     DNS="${DNS:-}"
+    DNS_NOTE=""
+    # "Same as host" copies the host's resolv.conf into the container. A Tailscale
+    # address (100.64.0.0/10, e.g. MagicDNS or a tailnet Pi-hole) or a local stub
+    # (127.x) only works on the host itself, so use public DNS instead.
+    if [[ -z $DNS ]] && ! preset DNS; then
+        local unreachable
+        unreachable="$(host_only_dns)"
+        if [[ -n $unreachable ]]; then
+            DNS="1.1.1.1 8.8.8.8"
+            DNS_NOTE="the host's DNS ($unreachable) only works on the host, e.g. Tailscale"
+        fi
+    fi
     SD="${SD:-}"
     MAC="${MAC:-}"
     VLAN="${VLAN:-}"
@@ -129,6 +141,12 @@ defaults() {
     PORT="${PORT:-8000}"
     TZ="${TZ:-$(cat /etc/timezone 2>/dev/null || timedatectl show -p Timezone --value 2>/dev/null || echo Etc/UTC)}"
     VERBOSE="${VERBOSE:-no}"
+}
+
+# Prints the host's nameservers that a container can't use (Tailscale CGNAT range or loopback)
+host_only_dns() {
+    awk '/^nameserver/ {print $2}' "${HOST_RESOLV_CONF:-/etc/resolv.conf}" 2>/dev/null |
+        grep -E '^(127\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|::1$|fd7a:115c:a1e0:)' | paste -sd' ' || true
 }
 
 valid_ipv4_cidr() { [[ $1 =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$ ]] && valid_octets "${1%/*}"; }
@@ -240,8 +258,17 @@ step_ipv6() {
     [[ $IPV6 =~ ^(auto|dhcp|none)$ || $IPV6 =~ ^[0-9a-fA-F:]+/[0-9]{1,3}$ ]] || { bad "\"$IPV6\" isn't a valid IPv6 setting."; IPV6=auto; return 2; }
 }
 step_dns() {
-    preset DNS || { ask DNS "DNS server" "DNS server (blank = same as the Proxmox host):" || return 1; }
-    [[ -z $DNS ]] || valid_ipv4 "$DNS" || [[ $DNS =~ ^[0-9a-fA-F:]+$ ]] || { bad "\"$DNS\" isn't an IP address."; return 2; }
+    local prompt="DNS servers, separated by spaces (blank = same as the Proxmox host):"
+    [[ -n $DNS_NOTE ]] && prompt+="\n\nPre-filled because $DNS_NOTE."
+    preset DNS || { ask DNS "DNS server" "$prompt" || return 1; }
+    local ns
+    for ns in $DNS; do
+        valid_ipv4 "$ns" || [[ $ns =~ ^[0-9a-fA-F:]+$ ]] || { bad "\"$ns\" isn't an IP address."; return 2; }
+    done
+    if [[ -z $DNS && -n "$(host_only_dns)" ]]; then
+        bad "The host's DNS ($(host_only_dns)) only works on the host (Tailscale or a local resolver), so the container couldn't resolve names. Enter a DNS server, e.g. your router or 1.1.1.1."
+        return 2
+    fi
     preset SD || { ask SD "DNS search domain" "DNS search domain (blank = same as the host):" || return 1; }
 }
 step_link() {
@@ -312,7 +339,7 @@ Storage:        $STORAGE (templates: $TEMPLATE_STORAGE)
 Bridge:         $BRG${VLAN:+ (VLAN $VLAN)}${MTU:+, MTU $MTU}
 IPv4:           $NET${GATE:+ via $GATE}
 IPv6:           $net6
-DNS:            ${DNS:-host}${SD:+, search $SD}
+DNS:            ${DNS:-host}${SD:+, search $SD}${DNS_NOTE:+ (because $DNS_NOTE)}
 MAC:            ${MAC:-random}
 SSH root login: $SSH
 Tags:           ${TAGS:-none}
