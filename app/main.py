@@ -544,7 +544,52 @@ async def recommend_season(user=VIEWER):
 @app.get("/api/recommend/for-you")
 async def recommend_for_you(user=VIEWER):
     """Airing shows picked from what this person follows, queued and has in the library."""
-    return await recommend.for_you(user["id"])
+    return await recommend.for_you(user)
+
+
+@app.get("/api/mediaserver/accounts")
+async def media_accounts(user=VIEWER):
+    """The media server's accounts, for linking watch history, and which one is linked to you."""
+    kind = db.get_setting("media_server") if mediaserver.configured() else "none"
+    if kind == "none":
+        return {"kind": "none", "accounts": [], "linked": None}
+    try:
+        accounts = await recommend.server_accounts()
+    except Exception as exc:
+        return {"kind": kind, "accounts": [], "linked": None, "error": str(exc)}
+    me = auth.get_user(user["id"])
+    linked = await recommend.linked_account(me)
+    return {"kind": kind, "accounts": accounts, "linked": linked,
+            "off": me["media_user_id"] == mediaserver.NO_HISTORY}
+
+
+async def _link_media_user(user_id: int, account_id: str) -> dict:
+    """Links an AniStash user to a media server account ('-' = don't use watch history,
+    '' = match by name again)."""
+    name = ""
+    if account_id not in ("", mediaserver.NO_HISTORY):
+        accounts = await recommend.server_accounts()
+        match = next((a for a in accounts if a["id"] == account_id), None)
+        if not match:
+            raise HTTPException(400, "That account isn't on the media server.")
+        name = match["name"]
+    db.execute("UPDATE users SET media_user_id = ?, media_user_name = ? WHERE id = ?", (account_id, name, user_id))
+    recommend.forget()
+    return {"media_user_id": account_id, "media_user_name": name}
+
+
+@app.put("/api/account/media-user")
+async def link_my_media_user(account_id: str = Body(..., embed=True), user=VIEWER):
+    return await _link_media_user(user["id"], account_id)
+
+
+@app.put("/api/users/{user_id}/media-user")
+async def link_media_user(request: Request, user_id: int, account_id: str = Body(..., embed=True), user=ADMIN):
+    target = auth.get_user(user_id)
+    result = await _link_media_user(user_id, account_id)
+    auth.audit(user["username"], "media_account_linked", f"{target['username']} → {result['media_user_name'] or account_id or 'auto'}",
+               client_ip(request))
+    return result
 
 
 @app.get("/api/search")

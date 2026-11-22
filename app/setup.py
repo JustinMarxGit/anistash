@@ -140,8 +140,10 @@ def save_media_server(kind: str, url: str, token: str | None, library_id: str | 
     if kind != "none" and not url.startswith(("http://", "https://")):
         raise SetupError("The server URL must start with http:// or https://")
     if kind != db.get_setting("media_server"):
-        # A library id from the other server type would be meaningless
+        # A library id, or accounts, from the other server type would be meaningless
         db.set_settings(media_library_id="", media_library_name="")
+        db.execute("UPDATE users SET media_user_id = '', media_user_name = ''")
+        db.execute("DELETE FROM cache WHERE key LIKE 'watch:%' OR key LIKE 'media-users:%'")
     values = {"media_server": kind, "media_url": url}
     if token is not None:
         values["media_token"] = vault.encrypt(token.strip())

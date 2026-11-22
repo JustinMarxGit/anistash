@@ -73,6 +73,9 @@
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+html { scrollbar-gutter: stable; }  /* no sideways jump when a window locks the page */
+/* An open window (What's new, queue, follow…) locks the page behind it */
+html.sheet-open, html:has(.sheet-backdrop) { overflow: hidden; }
 body {
   margin: 0;
   min-height: 100dvh;
@@ -423,7 +426,7 @@ button.following { color: var(--accent); border-color: var(--accent); background
 /* Sheet ---------------------------------------------------------------------------- */
 
 .sheet-backdrop { position: fixed; inset: 0; z-index: 40; background: rgb(8 8 10 / 55%); backdrop-filter: blur(3px); display: flex; align-items: flex-end; justify-content: center; animation: fade .25s; }
-.sheet { width: 100%; max-height: 90dvh; overflow: auto; background: var(--surface); border-radius: 22px 22px 0 0; padding: 26px 18px calc(22px + env(safe-area-inset-bottom)); box-shadow: var(--shadow-lift); animation: sheet-up .5s var(--spring); }
+.sheet { width: 100%; max-height: 90dvh; overflow: auto; overscroll-behavior: contain; background: var(--surface); border-radius: 22px 22px 0 0; padding: 26px 18px calc(22px + env(safe-area-inset-bottom)); box-shadow: var(--shadow-lift); animation: sheet-up .5s var(--spring); }
 .sheet::before { content: ""; display: block; width: 40px; height: 4px; border-radius: 4px; background: var(--border-strong); margin: -14px auto 16px; }
 @media (min-width: 768px) {
   .sheet-backdrop { align-items: center; }

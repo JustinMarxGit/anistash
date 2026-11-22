@@ -5,6 +5,16 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "0.9.1",
+        "title": "Picked for you learns from what you watch",
+        "items": [
+            "Picked for you now uses what you actually watch in Jellyfin or Plex: shows you watched a lot, recently "
+            "or marked as favorite count most (\"Because you watched …\").",
+            "Your Jellyfin/Plex account is found by your username. Change it under Settings → Your account.",
+            "Windows like this one now keep the page behind them still until you close them.",
+        ],
+    },
+    {
         "version": "0.9.0",
         "title": "Better recommendations",
         "items": [

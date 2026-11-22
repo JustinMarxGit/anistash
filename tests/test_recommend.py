@@ -169,7 +169,8 @@ def test_endpoints(sources, isolated, monkeypatch):
         c.post("/api/setup/complete")
         season = c.get("/api/recommend/season").json()
         assert season["items"][0]["title"] == "One Piece" and season["sources"]["kitsu"] is True
-        assert c.get("/api/recommend/for-you").json() == {"items": [], "based_on": 0}
+        assert c.get("/api/recommend/for-you").json() == {
+            "items": [], "based_on": {"shows": 0, "watched": 0, "server": "", "account": ""}}
 
 
 def test_mal_client_id_is_checked_and_stored_encrypted(isolated):

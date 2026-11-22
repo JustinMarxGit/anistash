@@ -221,8 +221,13 @@ function sheet(html, { dismissable = true } = {}) {
   backdrop.innerHTML = `<div class="sheet" role="dialog" aria-modal="true">${html}</div>`;
   if (dismissable) backdrop.addEventListener("click", (e) => { if (e.target === backdrop) backdrop.remove(); });
   document.body.append(backdrop);
+  document.documentElement.classList.add("sheet-open");
   return backdrop;
 }
+// The page unlocks once the last window is gone, however it was closed
+new MutationObserver(() => {
+  if (!document.querySelector(".sheet-backdrop")) document.documentElement.classList.remove("sheet-open");
+}).observe(document.body, { childList: true });
 
 // Small metadata cache so result lists don't refetch posters
 const metaCache = new Map();
@@ -325,6 +330,8 @@ const TIPS = [
   ['#update-app', "Install the newest AniStash. Your settings, users and downloads stay"],
   ['[data-shelf="-1"]', "Scroll this row back"],
   ['[data-shelf="1"]', "Scroll this row to see more"],
+  ['#media-user', "Which Jellyfin/Plex account is yours. Picked for you suggests shows like the ones it watches"],
+  ['[data-media]', "Which Jellyfin/Plex account is this person's, for their Picked for you"],
   ['#mal-clear', "Forget the saved MyAnimeList Client ID (Jikan is used instead)"],
   ['#check-updates', "Ask GitHub now whether a newer AniStash is out (normally checked every few hours)"],
   ['#auto-update', "Install new AniStash versions by themselves, while nothing is downloading"],
@@ -450,7 +457,7 @@ function tourSteps() {
     { route: "#/", el: "#best", title: "Best this season",
       text: "The best shows airing now, ranked by fan ratings from MyAnimeList, AniList and Kitsu, and by what people are watching. The number on each poster is the combined rating; hover over it to see where it comes from." },
     { route: "#/", el: "#foryou, #foryou-hint", title: "Picked for you",
-      text: "Shows airing now that are close to what you already have and follow, with the reason underneath. The more you download and follow, the better it gets." },
+      text: "Shows airing now that are close to what you watch in Jellyfin or Plex, and what you have and follow, with the reason underneath. The more you watch, the better it gets." },
     { route: "#/", el: ".poster", title: "Found something?",
       text: "Tap a poster to look it up and see its seasons and episodes." },
     { route: "#/search", el: "#search", title: "Search",
@@ -816,17 +823,19 @@ async function browseView() {
       + (down.length ? ` (${down.join(", ")} unavailable right now)` : "");
   }).catch((e) => { const el = $("#best"); if (el) el.outerHTML = `<p class="muted">${esc(e.message)}</p>`; });
 
-  forYou.then(({ items, based_on: basedOn }) => {
+  forYou.then(({ items, based_on: b }) => {
     const shelf = $("#foryou");
     if (!shelf) return;
     if (!items.length) {
-      $("#foryou-hint").textContent = basedOn
+      $("#foryou-hint").textContent = b.shows
         ? "Nothing airing right now is close to your shows. Check back next season."
-        : "Download or follow a few shows and AniStash will suggest similar ones that are airing now.";
+        : `${b.server ? `Watch a few shows in ${b.server}, or download` : "Download"} or follow a few, and AniStash will suggest similar ones that are airing now.`;
       shelf.remove();
       return;
     }
-    $("#foryou-hint").textContent = `Airing now and close to the ${basedOn} show${basedOn === 1 ? "" : "s"} you have and follow.`;
+    $("#foryou-hint").textContent = b.watched
+      ? `Airing now and close to what you watch in ${b.server}${b.account ? ` (as ${b.account})` : ""} and the shows you follow.`
+      : `Airing now and close to the ${b.shows} show${b.shows === 1 ? "" : "s"} you have and follow.`;
     shelf.innerHTML = items.map((m, k) => posterCard(m, k)).join("");
     lazyImages(shelf, shelf);
   }).catch(() => { $("#foryou")?.remove(); });
@@ -1978,13 +1987,44 @@ function accountCard() {
         <button type="button" data-setlang="ja" class="${titleLang() === "ja" ? "on" : ""}">Japanese (romaji)</button>
       </div>
       <p class="hint">Search finds shows by either name, whichever you pick.</p>
+      <div id="media-link"></div>
       <h3 style="margin-top:1rem">Help</h3>
       <div class="row"><button type="button" class="small" id="replay-tour">Show the tour again</button>
         <button type="button" class="small" id="show-changes">What's new</button></div>
     </form>`;
 }
 
+const SERVER_LABEL = { jellyfin: "Jellyfin", plex: "Plex" };
+
+// Options for linking a person to their Jellyfin/Plex account (only the server that's set up)
+function mediaAccountOptions(accounts, selected) {
+  return `<option value="" ${selected === "" ? "selected" : ""}>Match by username automatically</option>
+    ${accounts.map((a) => `<option value="${esc(a.id)}" ${a.id === selected ? "selected" : ""}>${esc(a.name)}</option>`).join("")}
+    <option value="-" ${selected === "-" ? "selected" : ""}>Don't use watch history</option>`;
+}
+
+async function mediaLinkCard(el) {
+  let data;
+  try { data = await api("/api/mediaserver/accounts"); } catch { return; }
+  if (data.kind === "none") return;
+  const label = SERVER_LABEL[data.kind];
+  const selected = data.off ? "-" : data.linked?.id || "";
+  el.innerHTML = `<h3 style="margin-top:1rem">Your ${label} account</h3>
+    <label class="field"><span>Picked for you learns from what this account watches</span>
+      <select id="media-user">${mediaAccountOptions(data.accounts, selected)}</select></label>
+    ${data.error ? `<p class="hint">Couldn't reach ${label}: ${esc(data.error)}</p>` : ""}`;
+  $("#media-user", el).addEventListener("change", async (e) => {
+    try {
+      await api("/api/account/media-user", { method: "PUT", body: { account_id: e.target.value } });
+      browseCache.delete("/api/recommend/for-you");
+      toast(e.target.value === "-" ? "Picked for you won't use your watch history"
+        : `Picked for you now learns from what you watch in ${label}`);
+    } catch (err) { toast(err.message, true); }
+  });
+}
+
 function bindAccountCard() {
+  mediaLinkCard($("#media-link"));
   for (const b of $$("[data-setlang]")) b.addEventListener("click", () => setTitleLang(b.dataset.setlang));
   $("#replay-tour").addEventListener("click", () => { location.hash = "#/"; setTimeout(startTour, 300); });
   $("#show-changes").addEventListener("click", () => showWhatsNew({ all: true }));
@@ -2018,9 +2058,10 @@ function randomPassword() {
 }
 
 async function usersPanel(container) {
-  let data;
-  try { data = await api("/api/users"); }
+  let data, media;
+  try { [data, media] = await Promise.all([api("/api/users"), api("/api/mediaserver/accounts").catch(() => ({ kind: "none" }))]); }
   catch (e) { container.innerHTML = `<div class="error-box">${esc(e.message)}</div>`; return; }
+  const linking = media.kind !== "none" && media.accounts.length;
   const when = (t) => t ? new Date(t * 1000).toLocaleDateString() : "never";
   container.innerHTML = `
     ${data.users.map((u) => `
@@ -2030,6 +2071,9 @@ async function usersPanel(container) {
           ${u.disabled ? `<span class="pill bad">disabled</span>` : ""}${u.must_change_password ? ` <span class="pill warn">must change password</span>` : ""}
           ${u.id === status.user.id ? `<span class="pill">you</span>` : ""}
           <div class="muted small">Last login ${esc(when(u.last_login_at))}</div>
+          ${linking ? `<label class="small muted" style="display:flex;gap:.4rem;align-items:center;margin-top:.35rem">${SERVER_LABEL[media.kind]}
+            <select class="small" data-media aria-label="${SERVER_LABEL[media.kind]} account for ${esc(u.username)}" style="min-height:32px;width:auto">
+              ${mediaAccountOptions(media.accounts, u.media_user_id)}</select></label>` : ""}
         </div>
         <div class="row" style="align-content:start">
           ${u.id === status.user.id ? "" : `
@@ -2096,6 +2140,15 @@ async function usersPanel(container) {
       });
     }
   }
+  for (const sel of $$("[data-media]", container)) {
+    sel.addEventListener("change", async () => {
+      const id = sel.closest("[data-user]").dataset.user;
+      try {
+        await api(`/api/users/${id}/media-user`, { method: "PUT", body: { account_id: sel.value } });
+        toast("Saved");
+      } catch (err) { toast(err.message, true); usersPanel(container); }
+    });
+  }
 }
 
 const AUDIT_LABELS = {
@@ -2105,7 +2158,7 @@ const AUDIT_LABELS = {
   settings_changed: "Changed settings", media_server_changed: "Changed media server", location_added: "Added location",
   location_changed: "Changed location", location_removed: "Removed location", queued: "Queued download",
   update_started: "Started update", admin_set: "Set admin (console)",
-  follow_added: "Followed", follow_removed: "Unfollowed",
+  follow_added: "Followed", follow_removed: "Unfollowed", media_account_linked: "Linked media server account",
 };
 
 async function auditPanel(container) {

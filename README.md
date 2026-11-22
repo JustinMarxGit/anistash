@@ -88,6 +88,7 @@ Browse opens with two lists of shows that are airing now.
   - It uses AniList's fan recommendations both ways: "fans of a show you have like this" and "fans of this like a show you have". Shared genres also count, and weak or decades-old shows are filtered out.
   - Each pick says why: *Because you have Blue Box*, or *New season of Frieren* for a show you have only earlier seasons of.
   - Shows you already have or follow are left out.
+  - **It learns from what you watch** in Jellyfin or Plex. Each AniStash user is linked to their own media server account, matched by username automatically; change it under *Settings → Your account*, or for anyone under *Settings → Users*. Shows you watched a lot, recently, or marked as favorites count most. Shows you tried and dropped, or that only sit in the library, count little. Picks then say *Because you watched …*. Choose *Don't use watch history* to opt out.
 
 Every site is optional. If one is down, the others still rank the shows, and the page says which one is missing. Scores are cached for 6 hours and hianime's lists for 1 hour, and the ranking is rebuilt in the background, so Browse doesn't wait for the sites.
 

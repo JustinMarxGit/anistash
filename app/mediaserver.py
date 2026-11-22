@@ -10,6 +10,7 @@ and go out together, so a busy queue doesn't trigger a scan per file.
 """
 
 import asyncio
+import datetime
 import logging
 import time
 
@@ -104,6 +105,75 @@ async def library_series(library_id: str) -> list[dict]:
         return [{"name": m.get("title", ""), "original_name": m.get("originalTitle", ""), "episodes": m.get("leafCount")}
                 for m in resp.json().get("MediaContainer", {}).get("Metadata") or []]
     return []
+
+
+# Watch history (for "Picked for you") ------------------------------------------------------
+
+NO_HISTORY = "-"  # a user who chose not to use their watch history
+
+
+async def server_users() -> list[dict]:
+    """The accounts on the media server: [{id, name}]."""
+    kind = db.get_setting("media_server")
+    if kind == "jellyfin":
+        resp = await _request("GET", "/Users")
+        return [{"id": u["Id"], "name": u.get("Name") or ""} for u in resp.json() if u.get("Id")]
+    if kind == "plex":
+        resp = await _request("GET", "/accounts")
+        accounts = resp.json().get("MediaContainer", {}).get("Account") or []
+        return [{"id": str(a["id"]), "name": a.get("name") or ""} for a in accounts if a.get("id") and a.get("name")]
+    return []
+
+
+def _timestamp(value) -> float:
+    """Jellyfin dates (2026-11-20T21:04:05.1234567Z) or Plex epoch seconds."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if not value:
+        return 0.0
+    text = str(value).rstrip("Z")
+    if "." in text:
+        head, frac = text.split(".", 1)
+        text = f"{head}.{frac[:6]}"
+    try:
+        return datetime.datetime.fromisoformat(text).replace(tzinfo=datetime.timezone.utc).timestamp()
+    except ValueError:
+        return 0.0
+
+
+async def watch_history(account_id: str) -> dict[str, dict]:
+    """What one account watched in the anime library: {series name: {episodes, last, favorite}}."""
+    kind = db.get_setting("media_server")
+    library_id = db.get_setting("media_library_id") or await ensure_library()
+    history: dict[str, dict] = {}
+
+    def add(series: str, episode_key, when: float) -> None:
+        entry = history.setdefault(series, {"episodes": set(), "last": 0.0, "favorite": False})
+        entry["episodes"].add(episode_key)
+        entry["last"] = max(entry["last"], when)
+
+    if kind == "jellyfin":
+        base = {"ParentId": library_id, "Recursive": "true", "EnableImages": "false"}
+        played, favorites = await asyncio.gather(
+            _request("GET", f"/Users/{account_id}/Items", params={
+                **base, "IncludeItemTypes": "Episode", "Filters": "IsPlayed", "Fields": "SeriesName",
+                "SortBy": "DatePlayed", "SortOrder": "Descending", "Limit": 2000}),
+            _request("GET", f"/Users/{account_id}/Items", params={
+                **base, "IncludeItemTypes": "Series", "Filters": "IsFavorite"}))
+        for item in played.json().get("Items", []):
+            if item.get("SeriesName"):
+                add(item["SeriesName"], item.get("Id"), _timestamp((item.get("UserData") or {}).get("LastPlayedDate")))
+        for item in favorites.json().get("Items", []):
+            history.setdefault(item.get("Name", ""), {"episodes": set(), "last": 0.0, "favorite": False})["favorite"] = True
+    elif kind == "plex":
+        resp = await _request("GET", "/status/sessions/history/all", params={
+            "accountID": account_id, "librarySectionID": library_id, "sort": "viewedAt:desc",
+            "X-Plex-Container-Start": 0, "X-Plex-Container-Size": 2000})
+        for item in resp.json().get("MediaContainer", {}).get("Metadata") or []:
+            if item.get("type") == "episode" and item.get("grandparentTitle"):
+                add(item["grandparentTitle"], item.get("ratingKey") or item.get("title"), _timestamp(item.get("viewedAt")))
+    return {name: {"episodes": len(h["episodes"]), "last": h["last"], "favorite": h["favorite"]}
+            for name, h in history.items() if name}
 
 
 async def find_series(name: str) -> bool:

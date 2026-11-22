@@ -154,7 +154,8 @@ def _record_failure(username: str, ip: str) -> None:
 def public_user(row) -> dict:
     return {"id": row["id"], "username": row["username"], "role": row["role"], "disabled": bool(row["disabled"]),
             "must_change_password": bool(row["must_change_password"]), "created_at": row["created_at"],
-            "last_login_at": row["last_login_at"]}
+            "last_login_at": row["last_login_at"], "media_user_id": row["media_user_id"],
+            "media_user_name": row["media_user_name"]}
 
 
 def has_admin() -> bool:

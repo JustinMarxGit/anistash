@@ -18,7 +18,7 @@ import math
 import re
 import time
 
-from . import anilist, db, library, net, ratings
+from . import anilist, db, library, mediaserver, net, ratings
 from .naming import base_title, detect_season, normalize
 
 log = logging.getLogger("anistash.recommend")
@@ -185,21 +185,80 @@ _TASTE_FIELDS = ("Media(search: $s%d, type: ANIME, isAdult: false) { id title { 
                  "recommendations(perPage: 10, sort: RATING_DESC) { nodes { rating mediaRecommendation { id } } } }")
 
 
-def taste_titles(user_id: int, library_names: list[str], limit: int = 40) -> list[str]:
-    """What this person has: their follows, what they queued (newest first), then the library."""
-    names = [r["series_name"] for r in db.query(
+WATCH_TTL = 1800
+HALF_LIFE = 90 * 86400  # a show watched 90 days ago counts half as much as one watched today
+
+
+def _have(user_id: int, library_names: list[str]) -> list[tuple[str, str]]:
+    """What this person has: (name, 'mine') for their follows and what they queued, newest
+    first, then (name, 'library') for the rest of the library."""
+    names = [(r["series_name"], "mine") for r in db.query(
         "SELECT series_name FROM follows WHERE created_by = ? ORDER BY id DESC", (user_id,))]
-    names += [r["series_name"] for r in db.query(
+    names += [(r["series_name"], "mine") for r in db.query(
         "SELECT series_name, MAX(id) AS last FROM batches WHERE created_by = ? GROUP BY series_name ORDER BY last DESC",
         (user_id,))]
-    names += library_names
-    out, seen = [], set()
-    for name in names:
+    return names + [(name, "library") for name in library_names]
+
+
+async def linked_account(user) -> dict | None:
+    """The media server account whose watching shapes this person's picks: the one they (or an
+    admin) chose, else the account with the same name. None without one."""
+    if not mediaserver.configured() or user["media_user_id"] == mediaserver.NO_HISTORY:
+        return None
+    if user["media_user_id"]:
+        return {"id": user["media_user_id"], "name": user["media_user_name"]}
+    try:
+        accounts = await server_accounts()
+    except Exception:
+        return None
+    match = next((a for a in accounts if a["name"].lower() == user["username"].lower()), None)
+    if match:
+        db.execute("UPDATE users SET media_user_id = ?, media_user_name = ? WHERE id = ?",
+                   (match["id"], match["name"], user["id"]))
+    return match
+
+
+async def server_accounts() -> list[dict]:
+    kind = db.get_setting("media_server")
+    return await ratings._cached(f"media-users:{kind}", WATCH_TTL, mediaserver.server_users)
+
+
+async def watched(account: dict) -> dict[str, dict]:
+    kind = db.get_setting("media_server")
+    return await ratings._cached(f"watch:{kind}:{account['id']}", WATCH_TTL,
+                                 lambda: mediaserver.watch_history(account["id"]))
+
+
+def taste_profile(have: list[tuple[str, str]], history: dict[str, dict] | None, now: float | None = None,
+                  limit: int = 40) -> list[dict]:
+    """[{title, weight, why}] strongest first. With watch history, what you watched (more
+    episodes, more recently, favorites) counts most; shows only sitting in the library count
+    little. Without it, everything you have counts the same, as before."""
+    now = now or time.time()
+    profile: dict[str, dict] = {}
+
+    def add(name: str, weight: float, why: str) -> None:
         key = library.series_key(name)
-        if key and key not in seen:
-            seen.add(key)
-            out.append(base_title(anilist_name(name)))
-    return out[:limit]
+        if not key or weight <= 0:
+            return
+        entry = profile.get(key)
+        if entry is None or weight > entry["weight"]:
+            profile[key] = {"title": base_title(anilist_name(name)), "weight": weight,
+                            "why": "watched" if why == "watched" or (entry and entry["why"] == "watched") else why}
+        elif why == "watched":
+            entry["why"] = "watched"
+
+    for name, h in (history or {}).items():
+        age = max(0.0, now - h["last"]) if h["last"] else HALF_LIFE * 4
+        weight = math.log1p(h["episodes"]) * 0.5 ** (age / HALF_LIFE)
+        if h["episodes"] <= 2 and age > 60 * 86400:
+            weight *= 0.3  # tried it and stopped
+        if h["favorite"]:
+            weight = max(weight, 1.0) * 1.5
+        add(name, weight, "watched")
+    for name, source in have:
+        add(name, 1.0 if source == "mine" or history is None else 0.3, "have")
+    return sorted(profile.values(), key=lambda e: -e["weight"])[:limit]
 
 
 def anilist_name(folder: str) -> str:
@@ -235,23 +294,36 @@ async def _taste_media(titles: list[str]) -> list[dict]:
             found[title] = media
             db.execute("INSERT OR REPLACE INTO cache (key, value, expires_at) VALUES (?, ?, ?)",
                        (f"anilist:taste:{normalize(title)}", json.dumps(media), int(time.time()) + 86400))
-    return [{"title": t, **m} for t, m in found.items() if m]
+    return [{**m, "query": t} for t, m in found.items() if m]
 
 
-async def for_you(user_id: int) -> dict:
+async def for_you(user) -> dict:
     disk, _ = await library._index()
-    titles = taste_titles(user_id, [entry["name"] for entry in disk.values()])
-    if not titles:
-        return {"items": [], "based_on": 0}
-    fingerprint = hashlib.sha1("|".join(titles).encode()).hexdigest()[:12]
-    hit = _memo.get(f"you:{user_id}")
+    account = await linked_account(user)
+    history = None
+    if account:
+        try:
+            history = await watched(account)
+        except Exception as exc:
+            log.warning("Couldn't read watch history for %s: %s", user["username"], exc)
+    profile = taste_profile(_have(user["id"], [entry["name"] for entry in disk.values()]), history)
+    server = {"jellyfin": "Jellyfin", "plex": "Plex"}.get(db.get_setting("media_server"), "")
+    based_on = {"shows": len(profile), "watched": sum(1 for e in profile if e["why"] == "watched"),
+                "server": server if history is not None else "", "account": (account or {}).get("name", "")}
+    if not profile:
+        return {"items": [], "based_on": based_on}
+    fingerprint = hashlib.sha1(json.dumps([(e["title"], round(e["weight"], 2)) for e in profile]).encode()).hexdigest()[:12]
+    hit = _memo.get(f"you:{user['id']}")
     if hit and hit[0] > time.time() and hit[1][0] == fingerprint:
         return hit[1][1]
 
-    season_data, taste = await asyncio.gather(scored(), _taste_media(titles))
+    season_data, taste = await asyncio.gather(scored(), _taste_media([e["title"] for e in profile]))
+    weights = {e["title"]: e for e in profile}
+    for media in taste:
+        media.update(weight=weights[media["query"]]["weight"], why=weights[media["query"]]["why"])
     result = pick(season_data["items"], taste, disk, followed_keys(), season_data["related"])
-    result["based_on"] = len(titles)
-    _memo[f"you:{user_id}"] = (time.time() + 3600, (fingerprint, result))
+    result["based_on"] = based_on
+    _memo[f"you:{user['id']}"] = (time.time() + 3600, (fingerprint, result))
     return result
 
 
@@ -268,35 +340,37 @@ def pick(candidates: list[dict], taste: list[dict], disk: dict, followed: set[st
     Decades-old long runners only show up when they're recommended directly."""
     related = related or {}
     recommended: dict[int, float] = {}
-    because: dict[int, tuple[float, str]] = {}
-    genres: dict[str, int] = {}
+    because: dict[int, tuple[float, str, str]] = {}  # strongest (contribution, show, watched/have)
+    genres: dict[str, float] = {}
     taste_keys: dict[str, str] = {}
     taste_ids: dict[int, str] = {}
     for media in taste:
         title = media.get("title") or {}
         label = title.get("english") or title.get("romaji") or ""
+        strength, why = media.get("weight", 1.0), media.get("why", "have")
         if media.get("id"):
-            taste_ids[media["id"]] = label
+            taste_ids[media["id"]] = (label, strength, why)
         for key in _keys(*anilist.names(media)):
             taste_keys.setdefault(key, label)
         for g in media.get("genres") or []:
-            genres[g] = genres.get(g, 0) + 1
+            genres[g] = genres.get(g, 0) + strength
         for node in ((media.get("recommendations") or {}).get("nodes") or []):
             rec, rating = node.get("mediaRecommendation"), node.get("rating") or 0
             if not rec or rating <= 0:
                 continue
-            weight = math.log1p(rating)
+            weight = math.log1p(rating) * strength
             recommended[rec["id"]] = recommended.get(rec["id"], 0) + weight
-            if weight > because.get(rec["id"], (0, ""))[0]:
-                because[rec["id"]] = (weight, label)
+            if weight > because.get(rec["id"], (0, "", ""))[0]:
+                because[rec["id"]] = (weight, label, why)
     # The other way round: this airing show's fans recommend one of your shows
     for show_id, recs in related.items():
         for taste_id, rating in recs.items():
             if taste_id in taste_ids and rating > 0:
-                weight = math.log1p(rating)
+                label, strength, why = taste_ids[taste_id]
+                weight = math.log1p(rating) * strength
                 recommended[show_id] = recommended.get(show_id, 0) + weight
-                if weight > because.get(show_id, (0, ""))[0]:
-                    because[show_id] = (weight, taste_ids[taste_id])
+                if weight > because.get(show_id, (0, "", ""))[0]:
+                    because[show_id] = (weight, label, why)
     top_rec = max(recommended.values(), default=0)
     taste_norm = math.sqrt(sum(v * v for v in genres.values())) or 1
     this_year = max((c.get("year") or 0 for c in candidates), default=0)
@@ -328,7 +402,8 @@ def pick(candidates: list[dict], taste: list[dict], disk: dict, followed: set[st
         if long_runner and not rec:
             match *= 0.4
         if rec and card["id"] in because:
-            reason = f"Because you have {because[card['id']][1]}"
+            _, show, why = because[card["id"]]
+            reason = f"Because you {'watched' if why == 'watched' else 'have'} {show}"
         else:
             liked = sorted((g for g in card.get("genres", []) if g in genres), key=lambda g: -genres[g])[:2]
             reason = f"Because you like {' and '.join(liked)}" if liked else "Popular with fans of your shows"
