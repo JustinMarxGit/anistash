@@ -247,7 +247,7 @@ def main(argv=None) -> int:
         elif args.cmd == "list-shares":
             password = _read_secret("Password: ") if args.type == "smb" and args.username else ""
             shares = asyncio.run(locations.browse({"type": args.type, "server": args.server,
-                                                   "username": args.username, "password": password}))
+                                                   "username": args.username, "password": password}))["shares"]
             prefix = f"//{args.server}/" if args.type == "smb" else f"{args.server}:"
             _print("\n".join(f"{prefix}{s['name']}" + (f"   ({s['comment']})" if s["comment"] else "") for s in shares))
         elif args.cmd == "test-location":

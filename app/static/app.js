@@ -698,34 +698,36 @@ function parseAddress(text) {
   return null;
 }
 
-function locationForm(loc = null, networkShares = true) {
+function locationForm(loc = null, networkShares = true, { wizard = false } = {}) {
   const type = loc?.type || (networkShares ? "smb" : "local");
   const c = loc?.config || {};
+  const serverPath = `<label class="field"><span>Jellyfin/Plex sees this folder as</span><input type="text" name="server_path" value="${esc(loc?.server_path || "")}" placeholder="/media/anime" autocapitalize="off">
+        <div class="hint">Only needed for faster Jellyfin/Plex scans: the same folder, as your media server's own path.</div></label>`;
   return `
     <form class="locform" data-id="${loc?.id ?? ""}">
-      <label class="field"><span>Name</span><input type="text" name="name" value="${esc(loc?.name || "")}" placeholder="NAS anime" required></label>
       ${loc ? `<input type="hidden" name="type" value="${type}">` : `
-      <div class="field"><span class="muted small" style="font-weight:600">Type</span><br>
-        <div class="segmented" role="group" aria-label="Location type">
-          <button type="button" data-type="smb" class="${type === "smb" ? "on" : ""}" ${networkShares ? "" : "disabled"}>SMB</button>
+      <div class="field">
+        <div class="segmented" role="group" aria-label="Where are downloads saved">
+          <button type="button" data-type="smb" class="${type === "smb" ? "on" : ""}" ${networkShares ? "" : "disabled"}>NAS (SMB)</button>
           <button type="button" data-type="nfs" class="${type === "nfs" ? "on" : ""}" ${networkShares ? "" : "disabled"}>NFS</button>
-          <button type="button" data-type="local" class="${type === "local" ? "on" : ""}">Local folder</button>
+          <button type="button" data-type="local" class="${type === "local" ? "on" : ""}">Local</button>
         </div>
         <input type="hidden" name="type" value="${type}">
       </div>`}
       <div data-fields="smb" ${type === "smb" ? "" : "hidden"}>
+        <label class="field"><span>NAS address</span><input type="text" name="server" value="${esc(type === "smb" ? c.server || "" : "")}" placeholder="10.10.1.3" autocapitalize="off" spellcheck="false" inputmode="url"></label>
         <div class="grid2">
           <label class="field"><span>Username</span><input type="text" name="username" value="${esc(c.username || "")}" autocapitalize="off" autocomplete="off" placeholder="blank for guest"></label>
           <label class="field"><span>Password</span><input type="password" name="password" autocomplete="new-password" placeholder="${loc ? "Leave blank to keep" : ""}"></label>
         </div>
-        <label class="field"><span>Share address</span>
-          <input type="text" name="address" value="${esc(locationAddress("smb", type === "smb" ? c : {}))}" placeholder="//10.10.1.3/media/anime" autocapitalize="off" spellcheck="false">
-          <div class="hint">Server, then the share, then any folder inside it. \\\\server\\share\\folder works too. Missing folders are created.</div>
-          <div class="hint" data-preview></div></label>
-        <button type="button" class="small" data-browse>Find shares on this server</button>
-        <div class="shares" data-shares></div>
-        <details class="more"><summary>More options</summary>
-          <div class="grid2" style="margin-top:.75rem">
+        <button type="button" class="block" data-connect>${loc ? "Connect & browse" : "Connect & find anime folder"}</button>
+        <div class="hint" data-preview></div>
+        <div class="browser" data-browser></div>
+        <details class="more"><summary>Type the share address yourself, or more options</summary>
+          <label class="field" style="margin-top:.75rem"><span>Share address</span>
+            <input type="text" name="address" value="${esc(locationAddress("smb", type === "smb" ? c : {}))}" placeholder="//10.10.1.3/media/anime" autocapitalize="off" spellcheck="false">
+            <div class="hint">Server, share, then any folder inside it. Missing folders are created.</div></label>
+          <div class="grid2">
             <label class="field"><span>Domain</span><input type="text" name="domain" value="${esc(c.domain || "")}" autocapitalize="off"></label>
             <label class="field"><span>SMB version</span><select name="vers">${["default", "3.1.1", "3.0", "2.1", "2.0", "1.0"].map((v) => `<option ${v === (c.vers || "default") ? "selected" : ""}>${v}</option>`).join("")}</select></label>
           </div>
@@ -744,10 +746,10 @@ function locationForm(loc = null, networkShares = true) {
       </div>
       <div data-fields="local" ${type === "local" ? "" : "hidden"}>
         <label class="field"><span>Folder</span><input type="text" name="path" value="${esc(c.path || "")}" placeholder="/mnt/media/anime" autocapitalize="off">
-          <div class="hint">Use this for a Proxmox bind mount or the container's own disk. Allowed under /mnt, /media, /srv, /data, /downloads, /storage or /home.</div></label>
+          <div class="hint">For a Proxmox bind mount or the container's own disk. Allowed under /mnt, /media, /srv, /data, /downloads, /storage or /home.</div></label>
       </div>
-      <label class="field" style="margin-top:1rem"><span>Media server sees this folder as (optional)</span><input type="text" name="server_path" value="${esc(loc?.server_path || "")}" placeholder="/media/anime" autocapitalize="off">
-        <div class="hint">The same folder as Jellyfin or Plex sees it. Lets anidl scan only the new season folders instead of the whole anime library.</div></label>
+      <label class="field" style="margin-top:1rem"><span>Name <span class="muted">(optional)</span></span><input type="text" name="name" value="${esc(loc?.name || "")}" placeholder="Filled in from the folder"></label>
+      ${wizard ? "" : loc ? serverPath : `<details class="more"><summary>Jellyfin/Plex path (optional)</summary>${serverPath}</details>`}
       <div class="err"></div>
       <div class="row end">
         <button type="button" class="ghost" data-cancel>Cancel</button>
@@ -764,23 +766,26 @@ function bindLocationForm(form, onSaved, onCancel) {
   };
   for (const b of $$("[data-type]", form)) b.addEventListener("click", () => setType(b.dataset.type));
 
+  const autoName = (p) => p?.type === "smb" ? (p.subpath ? `${p.subpath.split("/").pop()} on ${p.share}` : p.share)
+    : p?.type === "nfs" ? p.export.split("/").filter(Boolean).pop() || p.server : "";
+
   const preview = (input) => {
     const out = $("[data-preview]", input.closest("[data-fields]"));
     const p = parseAddress(input.value);
     if (!input.value.trim()) out.textContent = "";
     else if (!p) out.innerHTML = `<span style="color:var(--warn)">Start with //server/share (SMB) or server:/path (NFS).</span>`;
     else if (p.type === "smb") out.innerHTML = p.share
-      ? `✓ Server <b>${esc(p.server)}</b> · share <b>${esc(p.share)}</b>${p.subpath ? ` · folder <b>${esc(p.subpath)}</b>` : ""}`
-      : `Server <b>${esc(p.server)}</b>. Add the share name, or use Find shares.`;
+      ? `<div class="chosen">✓ Saving to <b>${esc(p.share)}</b>${p.subpath ? ` › <b>${esc(p.subpath.split("/").join(" › "))}</b>` : ""} <span class="muted">on ${esc(p.server)}</span></div>`
+      : `Server <b>${esc(p.server)}</b>. Add the share name.`;
     else out.innerHTML = `✓ NFS server <b>${esc(p.server)}</b> · path <b>${esc(p.export)}</b>`;
-    // Pasted an NFS address into the SMB box (or the reverse): move it to the right type
-    if (p && !form.dataset.id && p.type !== form.type.value && (p.type === "smb" || p.type === "nfs")) {
+    if (p?.share || p?.export) form.name.placeholder = autoName(p) || "Filled in from the folder";
+    // An NFS address typed into the SMB box (or the reverse) moves to the right type
+    if (p && !form.dataset.id && p.type !== form.type.value) {
       const target = p.type === "smb" ? form.address : form.nfs_address;
       target.value = input.value;
       input.value = "";
       setType(p.type);
       preview(target);
-      target.focus();
     }
   };
   for (const input of [form.address, form.nfs_address]) {
@@ -788,25 +793,86 @@ function bindLocationForm(form, onSaved, onCancel) {
     preview(input);
   }
 
+  // SMB: connect, auto-pick the anime folder, or browse shares and folders
+  const browser = $("[data-browser]", form);
+  const smb = { server: "", shares: [], suggestions: [] };
+  const login = () => { const d = formData(form); return { username: d.username, password: d.password, domain: d.domain }; };
+  const choose = (share, path) => {
+    form.address.value = `//${smb.server}/${share}${path.length ? `/${path.join("/")}` : ""}`;
+    form.server.value = smb.server;
+    preview(form.address);
+    renderPicked(share, path);
+  };
+  const renderPicked = (share, path) => {
+    const others = smb.suggestions.filter((s) => s.share !== share || s.path.join("/") !== path.join("/"));
+    browser.innerHTML = `
+      ${others.length ? `<div class="hint" style="margin-top:.5rem">Other matches:</div>${others.map((s, k) =>
+        `<button type="button" class="pickrow" data-sugg="${k}">📁 ${esc([s.share, ...s.path].join(" › "))}</button>`).join("")}` : ""}
+      <button type="button" class="small ghost" data-change>Pick a different folder</button>`;
+    for (const b of $$("[data-sugg]", browser)) b.onclick = () => { const s = others[Number(b.dataset.sugg)]; choose(s.share, s.path); };
+    $("[data-change]", browser).onclick = () => openFolder(share, path.slice(0, -1));
+  };
+  const renderShares = () => {
+    browser.innerHTML = `
+      ${smb.suggestions.length ? `<div class="hint" style="margin-top:.5rem">Anime folders found:</div>${smb.suggestions.map((s, k) =>
+        `<button type="button" class="pickrow" data-sugg="${k}">📁 ${esc([s.share, ...s.path].join(" › "))}</button>`).join("")}` : ""}
+      <div class="hint" style="margin-top:.5rem">${smb.suggestions.length ? "Or browse a share:" : "No folder called anime was found. Pick a share to browse:"}</div>
+      ${smb.shares.map((sh, k) => `<button type="button" class="pickrow" data-share="${k}">🗄️ ${esc(sh.name)}${sh.comment ? ` <span class="muted">· ${esc(sh.comment)}</span>` : ""}</button>`).join("")}`;
+    for (const b of $$("[data-sugg]", browser)) b.onclick = () => { const s = smb.suggestions[Number(b.dataset.sugg)]; choose(s.share, s.path); };
+    for (const b of $$("[data-share]", browser)) b.onclick = () => openFolder(smb.shares[Number(b.dataset.share)].name, []);
+  };
+  const openFolder = async (share, path) => {
+    browser.innerHTML = loading("Opening…");
+    let folders;
+    try {
+      ({ folders } = await api("/api/locations/folders", { method: "POST", body: { server: smb.server, share, path, ...login() } }));
+    } catch (err) {
+      browser.innerHTML = `<div class="error-box" style="margin-top:.5rem">${esc(err.message)}</div><button type="button" class="small" data-back>Back to shares</button>`;
+      $("[data-back]", browser).onclick = renderShares;
+      return;
+    }
+    const crumbs = [["All shares", -2], [share, -1], ...path.map((p, k) => [p, k])];
+    browser.innerHTML = `
+      <div class="crumbs">${crumbs.map(([label, k]) => `<button type="button" class="ghost small" data-crumb="${k}">${esc(label)}</button>`).join("<span>›</span>")}</div>
+      ${folders.map((f) => `<button type="button" class="pickrow" data-open="${esc(f)}">📁 ${esc(f)}</button>`).join("") || `<div class="hint">No folders here.</div>`}
+      <div class="row" style="margin-top:.5rem">
+        <button type="button" class="primary small" data-use>Use ${esc(path.length ? path[path.length - 1] : share)}</button>
+        <input type="text" class="grow" data-newname placeholder="or a new folder, e.g. anime" style="min-height:36px">
+        <button type="button" class="small" data-usenew>Use new</button>
+      </div>`;
+    for (const b of $$("[data-crumb]", browser)) {
+      b.onclick = () => { const k = Number(b.dataset.crumb); k === -2 ? renderShares() : openFolder(share, k === -1 ? [] : path.slice(0, k + 1)); };
+    }
+    for (const b of $$("[data-open]", browser)) b.onclick = () => openFolder(share, [...path, b.dataset.open]);
+    $("[data-use]", browser).onclick = () => choose(share, path);
+    $("[data-usenew]", browser).onclick = () => {
+      const name = $("[data-newname]", browser).value.trim();
+      if (name) choose(share, [...path, ...name.split(/[/\\]+/).filter(Boolean)]);
+    };
+  };
+  $("[data-connect]", form)?.addEventListener("click", async (e) => {
+    const server = form.server.value.trim().replace(/^(smb:|cifs:)?[/\\]+/i, "").split(/[/\\]/)[0];
+    if (!server) { form.server.focus(); return; }
+    try {
+      const r = await busy(e.currentTarget, () => api("/api/locations/browse", { method: "POST", body: { type: "smb", server, suggest: !form.dataset.id, ...login() } }));
+      Object.assign(smb, { server: r.server, shares: r.shares, suggestions: r.suggestions || [] });
+      // The best anime folder is picked straight away; the others stay one tap away
+      if (smb.suggestions.length) choose(smb.suggestions[0].share, smb.suggestions[0].path);
+      else renderShares();
+    } catch (err) {
+      browser.innerHTML = `<div class="error-box" style="margin-top:.5rem">${esc(err.message)}</div>`;
+    }
+  });
+
   for (const b of $$("[data-browse]", form)) {
     b.addEventListener("click", async () => {
-      const type = form.type.value;
-      const d = formData(form);
       const list = $("[data-shares]", b.closest("[data-fields]"));
       try {
-        const { shares } = await busy(b, () => api("/api/locations/browse", { method: "POST", body: {
-          type, address: type === "smb" ? d.address : d.nfs_address, username: d.username, password: d.password, domain: d.domain,
-        } }));
-        list.innerHTML = `<div class="hint">Tap one to use it:</div>` + shares.map((sh) =>
-          `<button type="button" class="small share" data-pick="${esc(sh.name)}" data-server="${esc(sh.server)}">${esc(sh.name)}${sh.comment ? ` <span class="muted">· ${esc(sh.comment)}</span>` : ""}</button>`).join("");
+        const r = await busy(b, () => api("/api/locations/browse", { method: "POST", body: { type: "nfs", address: form.nfs_address.value } }));
+        list.innerHTML = `<div class="hint">Tap one to use it:</div>` + r.shares.map((sh) =>
+          `<button type="button" class="small share" data-pick="${esc(sh.name)}">${esc(sh.name)}${sh.comment ? ` <span class="muted">· ${esc(sh.comment)}</span>` : ""}</button>`).join("");
         for (const pick of $$("[data-pick]", list)) {
-          pick.addEventListener("click", () => {
-            const input = type === "smb" ? form.address : form.nfs_address;
-            input.value = type === "smb" ? `//${pick.dataset.server}/${pick.dataset.pick}/` : `${pick.dataset.server}:${pick.dataset.pick}`;
-            preview(input);
-            list.innerHTML = `<div class="hint">Add a folder after it if you like, e.g. <code>${esc(input.value)}anime</code></div>`;
-            input.focus();
-          });
+          pick.addEventListener("click", () => { form.nfs_address.value = `${r.server}:${pick.dataset.pick}`; preview(form.nfs_address); list.innerHTML = ""; });
         }
       } catch (err) {
         list.innerHTML = `<div class="error-box" style="margin-top:.5rem">${esc(err.message)}</div>`;
@@ -818,8 +884,14 @@ function bindLocationForm(form, onSaved, onCancel) {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const d = formData(form);
-    const body = { name: d.name, type: d.type, server_path: d.server_path };
-    if (d.type === "smb") Object.assign(body, { address: d.address, username: d.username, password: d.password, domain: d.domain, vers: d.vers });
+    const body = { name: d.name, type: d.type, server_path: d.server_path || "" };
+    if (d.type === "smb") {
+      if (!parseAddress(d.address)?.share) {
+        $(".err", form).innerHTML = `<div class="error-box">Tap “Connect” to pick the folder first, or type the share address under “Type the share address yourself”.</div>`;
+        return;
+      }
+      Object.assign(body, { address: d.address, username: d.username, password: d.password, domain: d.domain, vers: d.vers });
+    }
     if (d.type === "nfs") Object.assign(body, { address: d.nfs_address, options: d.options });
     if (d.type === "local") body.path = d.path;
     const id = form.dataset.id;
@@ -834,7 +906,7 @@ function bindLocationForm(form, onSaved, onCancel) {
   });
 }
 
-async function locationsPanel(container, { onChange } = {}) {
+async function locationsPanel(container, { onChange, wizard = false } = {}) {
   container.innerHTML = loading();
   let data;
   try { data = await api("/api/locations"); }
@@ -867,7 +939,7 @@ async function locationsPanel(container, { onChange } = {}) {
     $("#add-loc", container).addEventListener("click", () => {
       $("#add-loc", container).hidden = true;
       const holder = $("#new-loc", container);
-      holder.innerHTML = `<div class="card" style="margin-top:.75rem">${locationForm(null, data.network_shares)}</div>`;
+      holder.innerHTML = `<div class="card" style="margin-top:.75rem">${locationForm(null, data.network_shares, { wizard })}</div>`;
       bindLocationForm($("form", holder), reload, () => { holder.innerHTML = ""; $("#add-loc", container).hidden = false; });
     });
     for (const row of $$("[data-loc]", container)) {
@@ -1204,7 +1276,7 @@ async function setupView() {
       bindBack();
       const next = $("#next");
       next.disabled = true;
-      locationsPanel($("#locs"), { onChange: (l) => { locs = l; next.disabled = l.length === 0; } });
+      locationsPanel($("#locs"), { wizard: true, onChange: (l) => { locs = l; next.disabled = l.length === 0; } });
       next.addEventListener("click", () => go(3));
       return;
     }

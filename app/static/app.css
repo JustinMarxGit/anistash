@@ -288,3 +288,11 @@ dl.summary dd { margin: 0; word-break: break-word; }
 details.more { margin-top: .75rem; }
 details.more summary { cursor: pointer; color: var(--muted); font-size: .9rem; font-weight: 600; min-height: 32px; }
 code { font-family: ui-monospace, monospace; font-size: .85em; }
+
+.browser { margin-top: .25rem; }
+.pickrow { display: flex; width: 100%; justify-content: flex-start; margin-top: .4rem; font-weight: 500; text-align: left; white-space: normal; }
+.chosen { margin-top: .75rem; padding: .7rem .9rem; border-radius: 10px; background: var(--ok-soft); color: var(--ok); font-size: .95rem; }
+.chosen .muted { color: var(--muted); }
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: .1rem; margin-top: .5rem; color: var(--muted); }
+.crumbs button { padding: 0 .4rem; }
+@media (max-width: 600px) { .loc { grid-template-columns: 1fr; } }

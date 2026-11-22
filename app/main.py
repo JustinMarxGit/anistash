@@ -202,7 +202,12 @@ async def add_location(data: dict = Body(...)):
 
 @app.post("/api/locations/browse")
 async def browse_shares(data: dict = Body(...)):
-    return {"shares": await locations.browse(data)}
+    return await locations.browse(data)
+
+
+@app.post("/api/locations/folders")
+async def browse_folders(data: dict = Body(...)):
+    return {"folders": await locations.folders(data)}
 
 
 @app.put("/api/locations/{location_id}")

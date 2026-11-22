@@ -285,7 +285,7 @@ async def _run_item(item) -> None:
 
     try:
         location = locations.get(item["location_id"])
-        if location["type"] != "local" and not os.path.ismount(location["path"]):
+        if not locations.is_mounted(location):
             raise locations.LocationError(f"{location['name']} isn't mounted. Test it under Settings → Locations.")
         dub = item["mode"] == "dub"
         index = await anicli.resolve_index(item["query"], item["result_index"], item["title"], dub)

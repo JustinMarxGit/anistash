@@ -26,7 +26,7 @@ async def _helper(*args: str, payload: dict | None = None) -> dict:
     if not config.helper_available():
         raise LocationError("Network shares can only be added in the anidl LXC (anidl-helper isn't installed here).")
     proc = await asyncio.create_subprocess_exec(
-        "sudo", "-n", config.HELPER, *args,
+        *config.SUDO, config.HELPER, *args,
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
     try:
@@ -67,11 +67,19 @@ def default_id() -> int | None:
     return row["id"] if row else None
 
 
+def is_mounted(row) -> bool:
+    """Whether a share's mount is up. The location's path may be a folder inside the share,
+    so check the mount point itself (MOUNT_ROOT/loc<id>), not the path."""
+    if row["type"] == "local":
+        return True
+    return os.path.ismount(config.MOUNT_ROOT / f"loc{row['id']}")
+
+
 def status(row) -> dict:
     path = row["path"]
     info = {"mounted": True, "writable": False, "free_bytes": None, "total_bytes": None}
     if row["type"] != "local":
-        info["mounted"] = os.path.ismount(path)
+        info["mounted"] = is_mounted(row)
     if info["mounted"] and os.path.isdir(path):
         info["writable"] = os.access(path, os.W_OK)
         try:
@@ -131,8 +139,6 @@ def parse_address(text: str) -> dict:
 def _clean(data: dict) -> tuple[str, str, dict, str | None, str]:
     name = (data.get("name") or "").strip()
     kind = data.get("type")
-    if not name:
-        raise LocationError("Give the location a name.")
     if kind in ("smb", "nfs") and (data.get("address") or "").strip():
         parsed = parse_address(data["address"])
         if parsed["type"] != kind:
@@ -161,6 +167,12 @@ def _clean(data: dict) -> tuple[str, str, dict, str | None, str]:
         cfg, password = {"path": path}, None
     else:
         raise LocationError("Pick SMB, NFS or local folder.")
+    if not name:
+        # Named after where it points, e.g. "anime on Data Store"
+        if kind == "smb":
+            name = f"{cfg['subpath'].split('/')[-1]} on {cfg['share']}" if cfg["subpath"] else cfg["share"]
+        else:
+            name = os.path.basename((cfg.get("export") or cfg.get("path") or "").rstrip("/")) or cfg.get("server", "Downloads")
     return name, kind, cfg, password, (data.get("server_path") or "").strip()
 
 
@@ -196,12 +208,23 @@ async def browse(data: dict) -> list[dict]:
     server = re.split(r"[/\\]|:/", server, maxsplit=1)[0]
     if not server:
         raise LocationError("Enter the server's address first (e.g. 10.10.1.3).")
-    payload = {"type": kind, "server": server}
+    payload = {"type": kind, "server": server, "suggest": bool(data.get("suggest"))}
     if kind == "smb":
-        payload.update(username=(data.get("username") or "").strip(), password=data.get("password") or "",
-                       domain=(data.get("domain") or "").strip())
+        payload.update(_smb_login(data))
     result = await _helper("list-shares", payload=payload)
-    return [{"server": server, **share} for share in result.get("shares", [])]
+    return {"server": server, "shares": result.get("shares", []), "suggestions": result.get("suggestions", [])}
+
+
+def _smb_login(data: dict) -> dict:
+    return {"username": (data.get("username") or "").strip(), "password": data.get("password") or "",
+            "domain": (data.get("domain") or "").strip()}
+
+
+async def folders(data: dict) -> list[str]:
+    """Folders inside an SMB share, for browsing to the download folder."""
+    payload = {"server": (data.get("server") or "").strip(), "share": data.get("share") or "",
+               "path": [p for p in data.get("path") or [] if p], **_smb_login(data)}
+    return (await _helper("list-folders", payload=payload)).get("folders", [])
 
 
 async def create(data: dict) -> dict:
@@ -240,7 +263,7 @@ async def update(location_id: int, data: dict) -> dict:
 
 async def test(location_id: int) -> dict:
     row = get(location_id)
-    if row["type"] != "local" and not os.path.ismount(row["path"]):
+    if not is_mounted(row):
         await _helper("remount", str(location_id))
     write_test(row["path"])
     return status(get(location_id))

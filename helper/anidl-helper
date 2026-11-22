@@ -9,7 +9,8 @@ this is the trust boundary: never pass anything from it to a shell.
   anidl-helper prepare-local   < {"path": "/mnt/media/anime"}     create a local folder owned by anidl
   anidl-helper update-tools                                       update ani-cli and yt-dlp
   anidl-helper update-app                                         run anidl-update -y in the background
-  anidl-helper list-shares     < {"type": "smb", "server": ...}   list SMB shares / NFS exports on a server
+  anidl-helper list-shares     < {"type": "smb", "server": ...}   list SMB shares / NFS exports (+ anime folders)
+  anidl-helper list-folders    < {"server", "share", "path": []}  list folders inside an SMB share
 
 Prints one JSON object: {"ok": true, ...} or {"ok": false, "error": "..."}.
 """
@@ -232,36 +233,104 @@ def _smb_error(text):
         return "The server rejected the username or password."
     if "Connection to" in text or "CONNECTION_REFUSED" in text or "HOST_UNREACHABLE" in text or "IO_TIMEOUT" in text:
         return "No SMB server answered at that address."
+    if "BAD_NETWORK_NAME" in text:
+        return "That share doesn't exist on the server."
+    if "OBJECT_NAME_NOT_FOUND" in text or "OBJECT_PATH_NOT_FOUND" in text:
+        return "That folder doesn't exist."
     lines = [l for l in text.splitlines() if l.strip()]
     return lines[-1] if lines else "Couldn't list the shares."
+
+
+def _smbclient(spec, *args, timeout=30):
+    """Runs smbclient with the spec's credentials kept in a root-only temp file."""
+    if not shutil.which("smbclient"):
+        fail("smbclient isn't installed. Run anidl-update (or: apt install smbclient).")
+    username = check(USERNAME, spec.get("username", ""), "Username")
+    domain = check(DOMAIN, spec.get("domain", ""), "Domain")
+    password = spec.get("password", "")
+    if not isinstance(password, str) or "\n" in password:
+        raise Invalid("Password can't contain line breaks")
+    authfile = None
+    auth = ["-N"]
+    if username:
+        # Credentials go in a root-only file, never on the command line
+        fd, authfile = tempfile.mkstemp(prefix="anidl-auth-")
+        with os.fdopen(fd, "w") as f:
+            f.write(f"username={username}\npassword={password}\n" + (f"domain={domain}\n" if domain else ""))
+        auth = ["-A", authfile]
+    try:
+        return run("smbclient", *args, "-t", "10", *auth, timeout=timeout)
+    finally:
+        if authfile:
+            os.remove(authfile)
+
+
+# One entry of smbclient's "ls": "  name with spaces   D   0  Sat Nov  2 10:00:00 2026"
+LS_LINE = re.compile(r"^  (.+?)\s+([A-Z]+)\s+\d+\s+\w{3} \w{3} [ \d]\d \d\d:\d\d:\d\d \d{4}$")
+# Folders worth looking inside when searching for an anime folder
+MEDIA_HINT = re.compile(r"anime|jellyfin|plex|emby|kodi|media|video|tv|show|series|librar|data|share|download|public",
+                        re.IGNORECASE)
+ANIME = re.compile(r"anime", re.IGNORECASE)
+
+
+def _ls_blocks(output):
+    """Splits the output of several ls commands into one list of folder names per command."""
+    blocks, current = [], []
+    for line in output.splitlines():
+        if "blocks of size" in line:
+            blocks.append(current)
+            current = []
+            continue
+        match = LS_LINE.match(line)
+        if match and "D" in match.group(2) and match.group(1) not in (".", ".."):
+            current.append(match.group(1))
+    return blocks
+
+
+def _smb_path(parts):
+    for part in parts:
+        # Windows' own limits, plus ; and " which would break smbclient's -c command line
+        if not isinstance(part, str) or not part or part in (".", "..") or re.search(r'[\\/:*?"<>|;\x00-\x1f]', part):
+            raise Invalid(f'Folder name "{part}" can\'t be used')
+    return "\\".join(parts)
+
+
+def _list_dirs(spec, server, share, paths):
+    """Folder names inside each of `paths` (lists of parts), in one smbclient session."""
+    commands = "; ".join(f'ls "{_smb_path(p) + chr(92) if p else ""}*"' for p in paths)
+    result = _smbclient(spec, f"//{server}/{share}", "-c", commands)
+    blocks = _ls_blocks(result.stdout)
+    if not blocks and result.returncode != 0:
+        return None, _smb_error(result.stdout + result.stderr)
+    return blocks + [[] for _ in range(len(paths) - len(blocks))], None
+
+
+def _find_anime(spec, server, shares):
+    """Folders named like "anime" up to two levels deep in each share, best match first."""
+    found = []
+    for share in shares[:12]:
+        listing, _ = _list_dirs(spec, server, share, [[]])
+        if not listing:
+            continue
+        top = listing[0]
+        found += [{"share": share, "path": [d]} for d in top if ANIME.search(d)]
+        candidates = [d for d in top if MEDIA_HINT.search(d)] if len(top) > 12 else top
+        candidates = candidates[:15]
+        if not candidates:
+            continue
+        nested, _ = _list_dirs(spec, server, share, [[d] for d in candidates])
+        for parent, children in zip(candidates, nested or []):
+            found += [{"share": share, "path": [parent, d]} for d in children if ANIME.search(d)]
+    # "anime" exactly beats "Anime Movies"; shallower beats deeper
+    found.sort(key=lambda f: (f["path"][-1].lower() != "anime", len(f["path"])))
+    return found[:5]
 
 
 def list_shares(spec):
     kind = spec.get("type")
     server = check(SERVER, spec.get("server", ""), "Server")
     if kind == "smb":
-        if not shutil.which("smbclient"):
-            fail("smbclient isn't installed. Run anidl-update (or: apt install smbclient).")
-        username = check(USERNAME, spec.get("username", ""), "Username")
-        domain = check(DOMAIN, spec.get("domain", ""), "Domain")
-        password = spec.get("password", "")
-        if not isinstance(password, str) or "\n" in password:
-            raise Invalid("Password can't contain line breaks")
-        args = ["smbclient", "-L", f"//{server}", "-g", "-t", "10"]
-        authfile = None
-        if username:
-            # Credentials go in a root-only file, never on the command line
-            fd, authfile = tempfile.mkstemp(prefix="anidl-auth-")
-            with os.fdopen(fd, "w") as f:
-                f.write(f"username={username}\npassword={password}\n" + (f"domain={domain}\n" if domain else ""))
-            args += ["-A", authfile]
-        else:
-            args.append("-N")
-        try:
-            result = run(*args, timeout=30)
-        finally:
-            if authfile:
-                os.remove(authfile)
+        result = _smbclient(spec, "-L", f"//{server}", "-g")
         shares = []
         for line in result.stdout.splitlines():
             parts = line.split("|")
@@ -269,7 +338,8 @@ def list_shares(spec):
                 shares.append({"name": parts[1], "comment": parts[2] if len(parts) > 2 else ""})
         if not shares:
             fail(_smb_error(result.stdout + result.stderr) if result.returncode else "The server has no shares you can see.")
-        done(shares=shares)
+        suggestions = _find_anime(spec, server, [s["name"] for s in shares]) if spec.get("suggest") else []
+        done(shares=shares, suggestions=suggestions)
     elif kind == "nfs":
         if not shutil.which("showmount"):
             fail("showmount isn't installed (apt install nfs-common).")
@@ -281,8 +351,20 @@ def list_shares(spec):
                    for line in result.stdout.splitlines() if line.strip()]
         if not exports:
             fail("The server has no NFS exports.")
-        done(shares=exports)
+        done(shares=exports, suggestions=[])
     raise Invalid("Type must be smb or nfs")
+
+
+def list_folders(spec):
+    server = check(SERVER, spec.get("server", ""), "Server")
+    share = check_share(spec.get("share", ""))
+    path = spec.get("path") or []
+    if not isinstance(path, list):
+        raise Invalid("Path must be a list of folder names")
+    listing, error = _list_dirs(spec, server, share, [path])
+    if listing is None:
+        fail(error)
+    done(folders=sorted(listing[0], key=str.lower))
 
 
 def update_app():
@@ -315,6 +397,8 @@ def main():
             update_app()
         elif command == "list-shares":
             list_shares(json.load(sys.stdin))
+        elif command == "list-folders":
+            list_folders(json.load(sys.stdin))
         else:
             fail(f"Unknown command: {command}")
     except Invalid as exc:

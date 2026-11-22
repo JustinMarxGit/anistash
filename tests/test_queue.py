@@ -377,3 +377,59 @@ def test_helper_rejects_names_smb_forbids(name, shown):
         helper.check_share(name)
     if shown:
         assert all(c in str(err.value) for c in shown.split())
+
+
+SMB_LS = {
+    # one smbclient session per share; several ls commands print one block each
+    ("//10.10.1.3/Data Store", 'ls "*"'):
+        "  .                                   D        0  Sat Nov 22 10:00:00 2026\n"
+        "  ..                                  D        0  Sat Nov 22 10:00:00 2026\n"
+        "  jellyfin                            D        0  Sat Nov  2 10:00:00 2026\n"
+        "  backups                             D        0  Sat Nov  2 10:00:00 2026\n"
+        "  notes.txt                           A      120  Sat Nov  2 10:00:00 2026\n"
+        "\n\t\t3907018584 blocks of size 1024. 1000 blocks available\n",
+    ("//10.10.1.3/Data Store", 'ls "jellyfin\\*"; ls "backups\\*"'):
+        "  movies                              D        0  Sat Nov  2 10:00:00 2026\n"
+        "  anime                               D        0  Sat Nov  2 10:00:00 2026\n"
+        "  Anime Movies                        D        0  Sat Nov  2 10:00:00 2026\n"
+        "\n\t\t3907018584 blocks of size 1024. 1000 blocks available\n"
+        "  2025                                D        0  Sat Nov  2 10:00:00 2026\n"
+        "\n\t\t3907018584 blocks of size 1024. 1000 blocks available\n",
+    ("//10.10.1.3/photos", 'ls "*"'):
+        "  2024                                D        0  Sat Nov  2 10:00:00 2026\n"
+        "\n\t\t3907018584 blocks of size 1024. 1000 blocks available\n",
+    ("//10.10.1.3/photos", 'ls "2024\\*"'):
+        "\n\t\t3907018584 blocks of size 1024. 1000 blocks available\n",
+}
+
+
+def test_helper_finds_anime_folder(monkeypatch):
+    import subprocess
+    helper = _helper_module()
+
+    def fake_smbclient(spec, target, flag, commands, timeout=30):
+        return subprocess.CompletedProcess([], 0, SMB_LS[(target, commands)], "")
+
+    monkeypatch.setattr(helper, "_smbclient", fake_smbclient)
+    found = helper._find_anime({}, "10.10.1.3", ["Data Store", "photos"])
+    assert found == [{"share": "Data Store", "path": ["jellyfin", "anime"]},
+                     {"share": "Data Store", "path": ["jellyfin", "Anime Movies"]}]
+    listing, error = helper._list_dirs({}, "10.10.1.3", "Data Store", [[]])
+    assert listing == [["jellyfin", "backups"]] and error is None
+
+
+@pytest.mark.parametrize("parts", [["a;b"], ['say "hi"'], [".."], ["x/y"]])
+def test_helper_rejects_unsafe_folder_names(parts):
+    helper = _helper_module()
+    with pytest.raises(helper.Invalid):
+        helper._smb_path(parts)
+
+
+def test_mount_check_uses_mount_point_not_subfolder(isolated, monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "MOUNT_ROOT", isolated / "mnt")
+    checked = []
+    monkeypatch.setattr(os.path, "ismount", lambda p: checked.append(str(p)) or True)
+    row = {"id": 4, "type": "smb", "path": str(isolated / "mnt" / "loc4" / "jellyfin" / "anime")}
+    assert locations.is_mounted(row)
+    assert checked == [str(isolated / "mnt" / "loc4")]

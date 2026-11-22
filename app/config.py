@@ -17,6 +17,8 @@ TMP_DIR = DATA_DIR / "tmp"
 
 MOUNT_ROOT = Path(os.environ.get("ANIDL_MOUNT_ROOT", "/mnt/anidl"))
 HELPER = os.environ.get("ANIDL_HELPER", "/usr/local/lib/anidl/anidl-helper")
+# How the helper is run as root; development can set ANIDL_SUDO="" to call a stand-in directly
+SUDO = os.environ.get("ANIDL_SUDO", "sudo -n").split()
 
 ANI_CLI = os.environ.get("ANIDL_ANI_CLI", "ani-cli")
 MENU_CAPTURE = str(APP_DIR / "menu_capture.sh")
