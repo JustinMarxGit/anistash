@@ -60,7 +60,7 @@ reset_password() {
 }
 
 add_location() {
-    local kind name spec server share subpath user pw domain vers nfs_export opts path srv
+    local kind name spec user pw address path srv
     kind="$(whiptail --title "$TITLE" --menu "What kind of download location?" 14 72 3 \
         smb "SMB / Samba / Windows share (most NAS boxes)" \
         nfs "NFS export" \
@@ -68,22 +68,14 @@ add_location() {
     name="$(input "Name for this location:" "NAS anime")" || return 1
     case "$kind" in
         smb)
-            server="$(input "SMB server (IP or hostname):")" || return 1
-            share="$(input "Share name:" "media")" || return 1
-            subpath="$(input "Subfolder inside the share (optional):" "anime")" || return 1
-            user="$(input "Username (blank for guest):")" || return 1
+            user="$(input "Username for the share (blank for guest):")" || return 1
             pw="$(secret "Password:")" || return 1
-            domain="$(input "Domain (optional):")" || return 1
-            vers="$(whiptail --title "$TITLE" --menu "SMB version (default works for most):" 16 60 6 \
-                default "Negotiate automatically" 3.1.1 "" 3.0 "" 2.1 "" 2.0 "" 1.0 "Old devices only" 3>&1 1>&2 2>&3)" || return 1
-            spec="$(json name "$name" type smb server "$server" share "$share" subpath "$subpath" \
-                username "$user" password "$pw" domain "$domain" vers "$vers")"
+            address="$(input "Share address: server, share, then any folder inside it.\nExample: //10.10.1.3/media/anime (missing folders are created)" "//")" || return 1
+            spec="$(json name "$name" type smb address "$address" username "$user" password "$pw" vers default)"
             ;;
         nfs)
-            server="$(input "NFS server (IP or hostname):")" || return 1
-            nfs_export="$(input "Export path:" "/mnt/pool/media/anime")" || return 1
-            opts="$(input "Mount options (optional):" "vers=4.1")" || return 1
-            spec="$(json name "$name" type nfs server "$server" export "$nfs_export" options "$opts")"
+            address="$(input "Export address: server, a colon, then the folder.\nExample: 10.10.1.3:/mnt/pool/media/anime")" || return 1
+            spec="$(json name "$name" type nfs address "$address")"
             ;;
         local)
             path="$(input "Folder (under /mnt, /media, /srv, /data, /downloads, /storage or /home):" "/mnt/media/anime")" || return 1
@@ -94,6 +86,17 @@ add_location() {
     spec="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); d["server_path"]=sys.argv[2]; print(json.dumps(d))' "$spec" "$srv")"
     whiptail --title "$TITLE" --infobox "Mounting and testing $name…" 7 50
     printf '%s' "$spec" | show add-location
+}
+
+list_shares() {
+    local kind server user pw
+    kind="$(whiptail --title "$TITLE" --menu "Which kind of server?" 12 50 2 smb "SMB / Samba" nfs "NFS" 3>&1 1>&2 2>&3)" || return 1
+    server="$(input "Server address (IP or hostname):")" || return 1
+    if [[ $kind == smb ]]; then
+        user="$(input "Username (blank for guest):")" || return 1
+        pw="$(secret "Password:")" || return 1
+    fi
+    printf '%s\n' "${pw:-}" | show list-shares --type "$kind" --server "$server" --username "${user:-}"
 }
 
 pick_location() {
@@ -110,6 +113,7 @@ locations_menu() {
     while :; do
         choice="$(whiptail --title "$TITLE" --menu "Download locations" 17 72 7 \
             list "Show locations and their status" \
+            shares "List the shares on a server" \
             add "Add a location" \
             test "Test (and remount) a location" \
             default "Make a location the default" \
@@ -119,6 +123,7 @@ locations_menu() {
         case "$choice" in
             list) msg "$(cli list-locations 2>&1 | tr '\t' '|' | sed 's/|/  |  /g')" ;;
             add) add_location ;;
+            shares) list_shares ;;
             test) id="$(pick_location "Test which location?")" && show test-location "$id" ;;
             default) id="$(pick_location "Default location:")" && show default-location "$id" ;;
             server-path) id="$(pick_location "Which location?")" && path="$(input "Path as Jellyfin/Plex sees it:")" && show server-path "$id" "$path" ;;

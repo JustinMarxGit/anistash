@@ -9,6 +9,7 @@ this is the trust boundary: never pass anything from it to a shell.
   anidl-helper prepare-local   < {"path": "/mnt/media/anime"}     create a local folder owned by anidl
   anidl-helper update-tools                                       update ani-cli and yt-dlp
   anidl-helper update-app                                         run anidl-update -y in the background
+  anidl-helper list-shares     < {"type": "smb", "server": ...}   list SMB shares / NFS exports on a server
 
 Prints one JSON object: {"ok": true, ...} or {"ok": false, "error": "..."}.
 """
@@ -17,8 +18,10 @@ import json
 import os
 import pwd
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 
 MOUNT_ROOT = "/mnt/anidl"
 CREDS_DIR = "/etc/anidl/creds"
@@ -85,10 +88,8 @@ def mount(spec):
     if kind == "smb":
         server = check(SERVER, spec.get("server", ""), "Server")
         share = check(SMB_PART, spec.get("share", ""), "Share name")
-        subpath = spec.get("subpath", "").strip("/")
-        for part in filter(None, subpath.split("/")):
-            check(SMB_PART, part, "Subfolder")
-        what = f"//{server}/{share}" + (f"/{subpath}" if subpath else "")
+        # Only the share is mounted; anidl creates and uses folders inside it itself
+        what = f"//{server}/{share}"
         vers = spec.get("vers", "")
         if vers not in SMB_VERSIONS:
             raise Invalid("Unknown SMB version")
@@ -212,6 +213,64 @@ def update_tools():
     done(output="\n".join(out))
 
 
+def _smb_error(text):
+    if "LOGON_FAILURE" in text or "ACCESS_DENIED" in text:
+        return "The server rejected the username or password."
+    if "Connection to" in text or "CONNECTION_REFUSED" in text or "HOST_UNREACHABLE" in text or "IO_TIMEOUT" in text:
+        return "No SMB server answered at that address."
+    lines = [l for l in text.splitlines() if l.strip()]
+    return lines[-1] if lines else "Couldn't list the shares."
+
+
+def list_shares(spec):
+    kind = spec.get("type")
+    server = check(SERVER, spec.get("server", ""), "Server")
+    if kind == "smb":
+        if not shutil.which("smbclient"):
+            fail("smbclient isn't installed. Run anidl-update (or: apt install smbclient).")
+        username = check(USERNAME, spec.get("username", ""), "Username")
+        domain = check(DOMAIN, spec.get("domain", ""), "Domain")
+        password = spec.get("password", "")
+        if not isinstance(password, str) or "\n" in password:
+            raise Invalid("Password can't contain line breaks")
+        args = ["smbclient", "-L", f"//{server}", "-g", "-t", "10"]
+        authfile = None
+        if username:
+            # Credentials go in a root-only file, never on the command line
+            fd, authfile = tempfile.mkstemp(prefix="anidl-auth-")
+            with os.fdopen(fd, "w") as f:
+                f.write(f"username={username}\npassword={password}\n" + (f"domain={domain}\n" if domain else ""))
+            args += ["-A", authfile]
+        else:
+            args.append("-N")
+        try:
+            result = run(*args, timeout=30)
+        finally:
+            if authfile:
+                os.remove(authfile)
+        shares = []
+        for line in result.stdout.splitlines():
+            parts = line.split("|")
+            if len(parts) >= 2 and parts[0] == "Disk" and not parts[1].endswith("$"):
+                shares.append({"name": parts[1], "comment": parts[2] if len(parts) > 2 else ""})
+        if not shares:
+            fail(_smb_error(result.stdout + result.stderr) if result.returncode else "The server has no shares you can see.")
+        done(shares=shares)
+    elif kind == "nfs":
+        if not shutil.which("showmount"):
+            fail("showmount isn't installed (apt install nfs-common).")
+        result = run("showmount", "-e", "--no-headers", server, timeout=30)
+        if result.returncode != 0:
+            fail("No NFS server answered at that address." if "RPC" in result.stderr or "timed out" in result.stderr
+                 else result.stderr.strip() or "Couldn't list the exports.")
+        exports = [{"name": line.split()[0], "comment": " ".join(line.split()[1:])}
+                   for line in result.stdout.splitlines() if line.strip()]
+        if not exports:
+            fail("The server has no NFS exports.")
+        done(shares=exports)
+    raise Invalid("Type must be smb or nfs")
+
+
 def update_app():
     # Runs outside the anidl service, because the update restarts it
     result = run("systemd-run", "--unit=anidl-self-update", "--collect", "--quiet",
@@ -240,6 +299,8 @@ def main():
             update_tools()
         elif command == "update-app":
             update_app()
+        elif command == "list-shares":
+            list_shares(json.load(sys.stdin))
         else:
             fail(f"Unknown command: {command}")
     except Invalid as exc:

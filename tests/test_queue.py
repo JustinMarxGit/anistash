@@ -317,3 +317,33 @@ def test_plex_without_library_scans_nothing(location, monkeypatch):
     server.shutdown()
     assert received == []
     assert "Plex scan failed: no anime library" in jobs.snapshot()[0]["warning"]
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("//10.10.1.3/datastore/jellyfin/anime",
+     {"type": "smb", "server": "10.10.1.3", "share": "datastore", "subpath": "jellyfin/anime"}),
+    ("\\\\nas\\media\\anime", {"type": "smb", "server": "nas", "share": "media", "subpath": "anime"}),
+    ("smb://nas.lan/media/", {"type": "smb", "server": "nas.lan", "share": "media", "subpath": ""}),
+    ("10.10.1.3:/mnt/pool/anime/", {"type": "nfs", "server": "10.10.1.3", "export": "/mnt/pool/anime"}),
+    ("nfs://nas/export", {"type": "nfs", "server": "nas", "export": "/export"}),
+])
+def test_parse_address(text, expected):
+    assert locations.parse_address(text) == expected
+
+
+@pytest.mark.parametrize("text", ["//nas", "//nas/", "media/anime", "//nas/share/../etc"])
+def test_parse_address_rejects(text):
+    with pytest.raises(locations.LocationError):
+        locations.parse_address(text)
+
+
+def test_share_box_path_is_split_into_share_and_folder():
+    # What was typed in v0.1.0's Share box: server 10.10.1.3, share "/datastore/jellyfin/anime"
+    _, _, cfg, _, _ = locations._clean({"name": "x", "type": "smb", "server": "10.10.1.3",
+                                         "share": "/datastore/jellyfin/anime"})
+    assert (cfg["share"], cfg["subpath"]) == ("datastore", "jellyfin/anime")
+
+
+def test_address_type_mismatch_is_explained():
+    with pytest.raises(locations.LocationError, match="NFS"):
+        locations._clean({"name": "x", "type": "smb", "address": "10.10.1.3:/mnt/anime"})

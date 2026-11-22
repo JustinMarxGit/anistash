@@ -196,6 +196,10 @@ def main(argv=None) -> int:
     p.add_argument("--username")
     sub.add_parser("add-location", help="JSON on stdin, same fields as the web form")
     sub.add_parser("list-locations")
+    p = sub.add_parser("list-shares", help="password is read from stdin")
+    p.add_argument("--type", choices=["smb", "nfs"], required=True)
+    p.add_argument("--server", required=True)
+    p.add_argument("--username", default="")
     for name in ("test-location", "remove-location", "default-location"):
         sub.add_parser(name).add_argument("id", type=int)
     p = sub.add_parser("server-path", help="the folder as the media server sees it")
@@ -240,6 +244,12 @@ def main(argv=None) -> int:
                 state_text = "ok" if info["mounted"] and info["writable"] else "NOT WRITABLE" if info["mounted"] else "NOT MOUNTED"
                 default = " (default)" if loc["is_default"] else ""
                 print(f"{loc['id']}\t{loc['name']}{default}\t{loc['type']}\t{loc['path']}\t{state_text}")
+        elif args.cmd == "list-shares":
+            password = _read_secret("Password: ") if args.type == "smb" and args.username else ""
+            shares = asyncio.run(locations.browse({"type": args.type, "server": args.server,
+                                                   "username": args.username, "password": password}))
+            prefix = f"//{args.server}/" if args.type == "smb" else f"{args.server}:"
+            _print("\n".join(f"{prefix}{s['name']}" + (f"   ({s['comment']})" if s["comment"] else "") for s in shares))
         elif args.cmd == "test-location":
             info = asyncio.run(locations.test(args.id))
             free = f"{info['free_bytes'] / 1e9:.1f} GB free" if info["free_bytes"] is not None else ""

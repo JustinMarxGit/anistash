@@ -7,6 +7,7 @@ The SMB password goes straight to the helper (which stores it root-only in
 import asyncio
 import json
 import os
+import re
 import shutil
 import uuid
 
@@ -91,21 +92,64 @@ def write_test(path: str) -> None:
         raise LocationError(f"Can't write to {path}: {exc.strerror or exc}")
 
 
+_SMB_URL = re.compile(r"^(?:smb|cifs)://([^/\\]+)[/\\]?(.*)$", re.IGNORECASE)
+_UNC = re.compile(r"^(?:\\\\|//)([^/\\]+)[/\\]?(.*)$")
+_NFS_URL = re.compile(r"^nfs://([^/]+)(/.*)?$", re.IGNORECASE)
+_NFS = re.compile(r"^([A-Za-z0-9.\-]+):(/.*)$")
+
+
+def _split_path(text: str) -> list[str]:
+    parts = [p for p in re.split(r"[/\\]+", text.strip()) if p]
+    if any(p in (".", "..") for p in parts):
+        raise LocationError("Folder names can't be . or ..")
+    return parts
+
+
+def parse_address(text: str) -> dict:
+    """Reads a share address the way people paste it.
+
+    SMB: //server/share/folder, \\\\server\\share\\folder, smb://server/share/folder
+    NFS: server:/export/path, nfs://server/export/path
+    """
+    text = text.strip()
+    match = _SMB_URL.match(text) or _UNC.match(text)
+    if match:
+        parts = _split_path(match.group(2))
+        if not parts:
+            raise LocationError(f"Add the share name after the server: //{match.group(1)}/<share>. "
+                                "Use Find shares to list them.")
+        return {"type": "smb", "server": match.group(1), "share": parts[0], "subpath": "/".join(parts[1:])}
+    match = _NFS_URL.match(text) or _NFS.match(text)
+    if match:
+        return {"type": "nfs", "server": match.group(1), "export": "/" + "/".join(_split_path(match.group(2) or "/"))}
+    raise LocationError("Enter an address like //10.10.1.3/share/folder (SMB) or 10.10.1.3:/export/path (NFS).")
+
+
 def _clean(data: dict) -> tuple[str, str, dict, str | None, str]:
     name = (data.get("name") or "").strip()
     kind = data.get("type")
     if not name:
         raise LocationError("Give the location a name.")
+    if kind in ("smb", "nfs") and (data.get("address") or "").strip():
+        parsed = parse_address(data["address"])
+        if parsed["type"] != kind:
+            raise LocationError(f"That looks like an {parsed['type'].upper()} address. Pick {parsed['type'].upper()} as the type.")
+        data = {**data, **parsed}
     if kind == "smb":
         cfg = {k: str(data.get(k) or "").strip() for k in SMB_FIELDS}
+        # A path typed into the share box (/datastore/jellyfin/anime): first part is the share
+        parts = _split_path(cfg["share"])
+        cfg["share"] = parts[0] if parts else ""
+        cfg["subpath"] = "/".join(parts[1:] + _split_path(cfg["subpath"]))
+        cfg["server"] = cfg["server"].strip("/\\")
         if not cfg["server"] or not cfg["share"]:
-            raise LocationError("Server and share are required.")
+            raise LocationError("Enter the share address, e.g. //10.10.1.3/share/folder.")
         password = data.get("password")
         password = password if password not in (None, "") else None
     elif kind == "nfs":
         cfg = {k: str(data.get(k) or "").strip() for k in NFS_FIELDS}
         if not cfg["server"] or not cfg["export"]:
-            raise LocationError("Server and export path are required.")
+            raise LocationError("Enter the export address, e.g. 10.10.1.3:/mnt/pool/anime.")
         password = None
     elif kind == "local":
         path = os.path.normpath((data.get("path") or "").strip())
@@ -125,12 +169,36 @@ async def _activate(location_id: int, kind: str, cfg: dict, password: str | None
             os.makedirs(cfg["path"], exist_ok=True)
         path = cfg["path"]
     else:
-        payload = {"id": location_id, "type": kind, **cfg}
+        payload = {"id": location_id, "type": kind, **{k: v for k, v in cfg.items() if k != "subpath"}}
         if password is not None:
             payload["password"] = password
         path = (await _helper("mount", payload=payload))["path"]
+        # The share itself is mounted; the folder inside it is created if it's new
+        if cfg.get("subpath"):
+            path = os.path.join(path, *cfg["subpath"].split("/"))
+            try:
+                os.makedirs(path, exist_ok=True)
+            except OSError as exc:
+                raise LocationError(f"Mounted the share but can't create {cfg['subpath']} in it: {exc.strerror or exc}")
     write_test(path)
     return path
+
+
+async def browse(data: dict) -> list[dict]:
+    """Shares on an SMB server, or exports on an NFS server, for the Find shares button."""
+    kind = data.get("type")
+    text = (data.get("address") or data.get("server") or "").strip()
+    # Only the server part matters here, whatever form the address is in
+    server = re.sub(r"^(?:smb|cifs|nfs)://|^[/\\]+", "", text, flags=re.IGNORECASE)
+    server = re.split(r"[/\\]|:/", server, maxsplit=1)[0]
+    if not server:
+        raise LocationError("Enter the server's address first (e.g. 10.10.1.3).")
+    payload = {"type": kind, "server": server}
+    if kind == "smb":
+        payload.update(username=(data.get("username") or "").strip(), password=data.get("password") or "",
+                       domain=(data.get("domain") or "").strip())
+    result = await _helper("list-shares", payload=payload)
+    return [{"server": server, **share} for share in result.get("shares", [])]
 
 
 async def create(data: dict) -> dict:

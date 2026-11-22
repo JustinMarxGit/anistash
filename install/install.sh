@@ -47,7 +47,7 @@ info "Installing system packages"
 export DEBIAN_FRONTEND=noninteractive
 quiet apt-get update
 quiet apt-get install -y --no-install-recommends \
-    ca-certificates curl git sudo python3 python3-venv ffmpeg cifs-utils nfs-common \
+    ca-certificates curl git sudo python3 python3-venv ffmpeg cifs-utils nfs-common smbclient \
     sed grep procps whiptail
 ok "System packages"
 

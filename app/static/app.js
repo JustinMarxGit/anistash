@@ -678,6 +678,25 @@ async function renderQueue() {
 
 // Locations (shared by settings and setup) ---------------------------------------------------
 
+function locationAddress(type, c) {
+  if (type === "smb" && c.server) return `//${c.server}/${c.share || ""}${c.subpath ? `/${c.subpath}` : ""}`;
+  if (type === "nfs" && c.server) return `${c.server}:${c.export || "/"}`;
+  return "";
+}
+
+// Mirrors locations.parse_address on the server, for the live preview
+function parseAddress(text) {
+  const t = text.trim();
+  let m = t.match(/^(?:smb|cifs):\/\/([^/\\]+)[/\\]?(.*)$/i) || t.match(/^(?:\\\\|\/\/)([^/\\]+)[/\\]?(.*)$/);
+  if (m) {
+    const parts = m[2].split(/[/\\]+/).filter(Boolean);
+    return { type: "smb", server: m[1], share: parts[0] || "", subpath: parts.slice(1).join("/") };
+  }
+  m = t.match(/^nfs:\/\/([^/]+)(\/.*)?$/i) || t.match(/^([A-Za-z0-9.-]+):(\/.*)$/);
+  if (m) return { type: "nfs", server: m[1], export: (m[2] || "/").replace(/\/+$/, "") || "/" };
+  return null;
+}
+
 function locationForm(loc = null, networkShares = true) {
   const type = loc?.type || (networkShares ? "smb" : "local");
   const c = loc?.config || {};
@@ -695,31 +714,38 @@ function locationForm(loc = null, networkShares = true) {
       </div>`}
       <div data-fields="smb" ${type === "smb" ? "" : "hidden"}>
         <div class="grid2">
-          <label class="field"><span>Server</span><input type="text" name="server" value="${esc(c.server || "")}" placeholder="192.168.1.10 or nas.lan" autocapitalize="off"></label>
-          <label class="field"><span>Share</span><input type="text" name="share" value="${esc(c.share || "")}" placeholder="media" autocapitalize="off"></label>
-        </div>
-        <label class="field"><span>Subfolder (optional)</span><input type="text" name="subpath" value="${esc(c.subpath || "")}" placeholder="anime" autocapitalize="off"></label>
-        <div class="grid2">
-          <label class="field"><span>Username</span><input type="text" name="username" value="${esc(c.username || "")}" autocapitalize="off" autocomplete="off"></label>
+          <label class="field"><span>Username</span><input type="text" name="username" value="${esc(c.username || "")}" autocapitalize="off" autocomplete="off" placeholder="blank for guest"></label>
           <label class="field"><span>Password</span><input type="password" name="password" autocomplete="new-password" placeholder="${loc ? "Leave blank to keep" : ""}"></label>
         </div>
-        <div class="grid2">
-          <label class="field"><span>Domain (optional)</span><input type="text" name="domain" value="${esc(c.domain || "")}" autocapitalize="off"></label>
-          <label class="field"><span>SMB version</span><select name="vers">${["default", "3.1.1", "3.0", "2.1", "2.0", "1.0"].map((v) => `<option ${v === (c.vers || "default") ? "selected" : ""}>${v}</option>`).join("")}</select></label>
-        </div>
+        <label class="field"><span>Share address</span>
+          <input type="text" name="address" value="${esc(locationAddress("smb", type === "smb" ? c : {}))}" placeholder="//10.10.1.3/media/anime" autocapitalize="off" spellcheck="false">
+          <div class="hint">Server, then the share, then any folder inside it. \\\\server\\share\\folder works too. Missing folders are created.</div>
+          <div class="hint" data-preview></div></label>
+        <button type="button" class="small" data-browse>Find shares on this server</button>
+        <div class="shares" data-shares></div>
+        <details class="more"><summary>More options</summary>
+          <div class="grid2" style="margin-top:.75rem">
+            <label class="field"><span>Domain</span><input type="text" name="domain" value="${esc(c.domain || "")}" autocapitalize="off"></label>
+            <label class="field"><span>SMB version</span><select name="vers">${["default", "3.1.1", "3.0", "2.1", "2.0", "1.0"].map((v) => `<option ${v === (c.vers || "default") ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+          </div>
+        </details>
       </div>
       <div data-fields="nfs" ${type === "nfs" ? "" : "hidden"}>
-        <div class="grid2">
-          <label class="field"><span>Server</span><input type="text" name="nfs_server" value="${esc(type === "nfs" ? c.server || "" : "")}" placeholder="192.168.1.10" autocapitalize="off"></label>
-          <label class="field"><span>Export path</span><input type="text" name="export" value="${esc(c.export || "")}" placeholder="/mnt/pool/media/anime" autocapitalize="off"></label>
-        </div>
-        <label class="field"><span>Mount options (optional)</span><input type="text" name="options" value="${esc(c.options || "")}" placeholder="vers=4.1" autocapitalize="off"></label>
+        <label class="field"><span>Export address</span>
+          <input type="text" name="nfs_address" value="${esc(locationAddress("nfs", type === "nfs" ? c : {}))}" placeholder="10.10.1.3:/mnt/pool/media/anime" autocapitalize="off" spellcheck="false">
+          <div class="hint">Server, a colon, then the exported folder (or a folder inside it).</div>
+          <div class="hint" data-preview></div></label>
+        <button type="button" class="small" data-browse>Find exports on this server</button>
+        <div class="shares" data-shares></div>
+        <details class="more"><summary>More options</summary>
+          <label class="field" style="margin-top:.75rem"><span>Mount options</span><input type="text" name="options" value="${esc(c.options || "")}" placeholder="vers=4.1" autocapitalize="off"></label>
+        </details>
       </div>
       <div data-fields="local" ${type === "local" ? "" : "hidden"}>
         <label class="field"><span>Folder</span><input type="text" name="path" value="${esc(c.path || "")}" placeholder="/mnt/media/anime" autocapitalize="off">
           <div class="hint">Use this for a Proxmox bind mount or the container's own disk. Allowed under /mnt, /media, /srv, /data, /downloads, /storage or /home.</div></label>
       </div>
-      <label class="field"><span>Media server sees this folder as (optional)</span><input type="text" name="server_path" value="${esc(loc?.server_path || "")}" placeholder="/media/anime" autocapitalize="off">
+      <label class="field" style="margin-top:1rem"><span>Media server sees this folder as (optional)</span><input type="text" name="server_path" value="${esc(loc?.server_path || "")}" placeholder="/media/anime" autocapitalize="off">
         <div class="hint">The same folder as Jellyfin or Plex sees it. Lets anidl scan only the new season folders instead of the whole anime library.</div></label>
       <div class="err"></div>
       <div class="row end">
@@ -730,20 +756,70 @@ function locationForm(loc = null, networkShares = true) {
 }
 
 function bindLocationForm(form, onSaved, onCancel) {
-  for (const b of $$("[data-type]", form)) {
-    b.addEventListener("click", () => {
-      form.type.value = b.dataset.type;
-      for (const x of $$("[data-type]", form)) x.classList.toggle("on", x === b);
-      for (const f of $$("[data-fields]", form)) f.hidden = f.dataset.fields !== b.dataset.type;
+  const setType = (type) => {
+    form.type.value = type;
+    for (const x of $$("[data-type]", form)) x.classList.toggle("on", x.dataset.type === type);
+    for (const f of $$("[data-fields]", form)) f.hidden = f.dataset.fields !== type;
+  };
+  for (const b of $$("[data-type]", form)) b.addEventListener("click", () => setType(b.dataset.type));
+
+  const preview = (input) => {
+    const out = $("[data-preview]", input.closest("[data-fields]"));
+    const p = parseAddress(input.value);
+    if (!input.value.trim()) out.textContent = "";
+    else if (!p) out.innerHTML = `<span style="color:var(--warn)">Start with //server/share (SMB) or server:/path (NFS).</span>`;
+    else if (p.type === "smb") out.innerHTML = p.share
+      ? `✓ Server <b>${esc(p.server)}</b> · share <b>${esc(p.share)}</b>${p.subpath ? ` · folder <b>${esc(p.subpath)}</b>` : ""}`
+      : `Server <b>${esc(p.server)}</b>. Add the share name, or use Find shares.`;
+    else out.innerHTML = `✓ NFS server <b>${esc(p.server)}</b> · path <b>${esc(p.export)}</b>`;
+    // Pasted an NFS address into the SMB box (or the reverse): move it to the right type
+    if (p && !form.dataset.id && p.type !== form.type.value && (p.type === "smb" || p.type === "nfs")) {
+      const target = p.type === "smb" ? form.address : form.nfs_address;
+      target.value = input.value;
+      input.value = "";
+      setType(p.type);
+      preview(target);
+      target.focus();
+    }
+  };
+  for (const input of [form.address, form.nfs_address]) {
+    input.addEventListener("input", () => preview(input));
+    preview(input);
+  }
+
+  for (const b of $$("[data-browse]", form)) {
+    b.addEventListener("click", async () => {
+      const type = form.type.value;
+      const d = formData(form);
+      const list = $("[data-shares]", b.closest("[data-fields]"));
+      try {
+        const { shares } = await busy(b, () => api("/api/locations/browse", { method: "POST", body: {
+          type, address: type === "smb" ? d.address : d.nfs_address, username: d.username, password: d.password, domain: d.domain,
+        } }));
+        list.innerHTML = `<div class="hint">Tap one to use it:</div>` + shares.map((sh) =>
+          `<button type="button" class="small share" data-pick="${esc(sh.name)}" data-server="${esc(sh.server)}">${esc(sh.name)}${sh.comment ? ` <span class="muted">· ${esc(sh.comment)}</span>` : ""}</button>`).join("");
+        for (const pick of $$("[data-pick]", list)) {
+          pick.addEventListener("click", () => {
+            const input = type === "smb" ? form.address : form.nfs_address;
+            input.value = type === "smb" ? `//${pick.dataset.server}/${pick.dataset.pick}/` : `${pick.dataset.server}:${pick.dataset.pick}`;
+            preview(input);
+            list.innerHTML = `<div class="hint">Add a folder after it if you like, e.g. <code>${esc(input.value)}anime</code></div>`;
+            input.focus();
+          });
+        }
+      } catch (err) {
+        list.innerHTML = `<div class="error-box" style="margin-top:.5rem">${esc(err.message)}</div>`;
+      }
     });
   }
+
   $("[data-cancel]", form).addEventListener("click", onCancel);
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const d = formData(form);
     const body = { name: d.name, type: d.type, server_path: d.server_path };
-    if (d.type === "smb") Object.assign(body, { server: d.server, share: d.share, subpath: d.subpath, username: d.username, password: d.password, domain: d.domain, vers: d.vers });
-    if (d.type === "nfs") Object.assign(body, { server: d.nfs_server, export: d.export, options: d.options });
+    if (d.type === "smb") Object.assign(body, { address: d.address, username: d.username, password: d.password, domain: d.domain, vers: d.vers });
+    if (d.type === "nfs") Object.assign(body, { address: d.nfs_address, options: d.options });
     if (d.type === "local") body.path = d.path;
     const id = form.dataset.id;
     $(".err", form).innerHTML = "";

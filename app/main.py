@@ -200,6 +200,11 @@ async def add_location(data: dict = Body(...)):
     return await locations.create(data)
 
 
+@app.post("/api/locations/browse")
+async def browse_shares(data: dict = Body(...)):
+    return {"shares": await locations.browse(data)}
+
+
 @app.put("/api/locations/{location_id}")
 async def edit_location(location_id: int, data: dict = Body(...)):
     return await locations.update(location_id, data)

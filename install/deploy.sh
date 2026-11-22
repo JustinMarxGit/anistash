@@ -9,6 +9,16 @@ LIB=/usr/local/lib/anidl
 
 [[ $EUID -eq 0 ]] || { echo "deploy.sh must run as root" >&2; exit 1; }
 
+# System packages added in later versions, so updates bring them to older installs too
+missing=()
+for pkg in smbclient cifs-utils nfs-common ffmpeg whiptail; do
+    dpkg -s "$pkg" &>/dev/null || missing+=("$pkg")
+done
+if ((${#missing[@]})); then
+    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${missing[@]}"
+fi
+
 # Python dependencies (anidl-update rolls the code back and reruns this if it fails)
 [[ -x $APP/venv/bin/python3 ]] || python3 -m venv "$APP/venv"
 "$APP/venv/bin/pip" install --quiet --upgrade pip
