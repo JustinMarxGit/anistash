@@ -64,7 +64,18 @@ on_error() {
     exit "$code"
 }
 trap 'on_error $LINENO' ERR
-trap 'stop_spinner; echo; exit 130' INT
+on_interrupt() {
+    stop_spinner
+    echo
+    if [[ -n $CREATED ]]; then
+        echo -e " ${YW}Stopped.${CL} Container $CREATED was left in place. Either remove it:"
+        echo "     pct stop $CREATED; pct destroy $CREATED --purge"
+        echo "   or finish the install inside it (once its network works):"
+        echo "     pct exec $CREATED -- bash -c \"curl -fsSL $RAW/install/install.sh | ANIDL_PORT=${PORT:-8000} bash\""
+    fi
+    exit 130
+}
+trap on_interrupt INT
 run() { if [[ ${VERBOSE:-no} == yes ]]; then "$@"; else "$@" >>"$LOG" 2>&1; fi; }
 
 # Preflight --------------------------------------------------------------------
@@ -348,13 +359,62 @@ create_container() {
     STEP="starting the container"
     msg_info "Starting the container"
     run pct start "$CTID"
-    local i
-    for i in $(seq 1 60); do
-        pct exec "$CTID" -- getent hosts github.com &>/dev/null && break
-        sleep 1
+    msg_ok "Started the container"
+    wait_for_network
+}
+
+# Runs a command in the container with a hard time limit, so a stuck DNS lookup or
+# a container that isn't ready yet can't hang the script
+cexec() { timeout "$1" pct exec "$CTID" -- "${@:2}"; }
+
+# Checks the container's network one layer at a time (address, internet, DNS) so a
+# failure says exactly what is wrong instead of just timing out.
+wait_for_network() {
+    STEP="waiting for the container's network"
+    local deadline=$((SECONDS + ${NET_WAIT:-90})) stage="" shown="" ip=""
+    while ((SECONDS < deadline)); do
+        ip="$(cexec 5 ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | head -n1 || true)"
+        if [[ -z $ip ]]; then
+            stage=address
+        elif ! cexec 6 bash -c '</dev/tcp/1.1.1.1/443' &>/dev/null && ! cexec 6 bash -c '</dev/tcp/8.8.8.8/443' &>/dev/null; then
+            stage=internet
+        elif ! cexec 8 getent hosts github.com &>/dev/null; then
+            stage=dns
+        else
+            msg_ok "Network is up (${ip})"
+            return 0
+        fi
+        if [[ $stage != "$shown" ]]; then
+            stop_spinner
+            printf "\r\e[K"
+            case $stage in
+                address) msg_info "Waiting for an IP address ($( [[ $NET == dhcp ]] && echo "DHCP" || echo "$NET"))" ;;
+                internet) msg_info "Got ${ip}; waiting for internet access" ;;
+                dns) msg_info "Internet works; waiting for DNS" ;;
+            esac
+            shown=$stage
+        fi
+        sleep 3
     done
-    pct exec "$CTID" -- getent hosts github.com &>/dev/null || { msg_error "The container has no network after 60s. Check the bridge/IP settings."; false; }
-    msg_ok "Container is up with network"
+
+    msg_error "The container's network isn't working after 90 seconds."
+    case $stage in
+        address)
+            echo -e "   It never got an IPv4 address on bridge ${BL}$BRG${CL}${VLAN:+ (VLAN $VLAN)}."
+            if [[ $NET == dhcp ]]; then
+                echo "   Check that DHCP reaches that bridge, or rerun with Advanced settings and a static IP."
+            else
+                echo "   Check the address $NET and the bridge."
+            fi ;;
+        internet)
+            echo -e "   It has the address ${BL}$ip${CL} but can't reach the internet."
+            echo "   Check the gateway (${GATE:-from DHCP}) and any firewall between the container and the internet." ;;
+        dns)
+            echo "   The internet is reachable but names don't resolve. The container uses:"
+            cexec 5 cat /etc/resolv.conf 2>/dev/null | grep -E '^(nameserver|search)' | sed 's/^/     /' || true
+            echo "   Rerun with Advanced settings and DNS set (e.g. 1.1.1.1), or fix DNS on the Proxmox host." ;;
+    esac
+    false
 }
 
 configure_access() {
