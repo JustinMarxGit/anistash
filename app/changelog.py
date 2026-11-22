@@ -5,6 +5,12 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "0.10.3",
+        "title": "Rank numbers fixed",
+        "items": ["Rank numbers 10 and up on Best this season and Trending are no longer cut off behind the "
+                  "posters on phones."],
+    },
+    {
         "version": "0.10.2",
         "title": "A rotating spotlight",
         "items": [

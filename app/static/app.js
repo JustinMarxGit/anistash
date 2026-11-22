@@ -765,7 +765,7 @@ function posterCard(m, k, { rank = 0 } = {}) {
   const score = m.rating ? `<span class="score" data-tip="${esc(ratingTip(m))}">${icon("star")}${(m.rating.combined / 10).toFixed(1)}</span>` : "";
   const dub = m.available?.dub ? `<span class="dubtag" data-tip="${esc(`An English dub is out: ${m.available.dub} episode${m.available.dub === 1 ? "" : "s"} so far`)}">Dub</span>` : "";
   return `<a class="poster rise" style="--i:${k}" href="#/anime?id=${m.id}" data-card="${m.id}">
-      ${rank ? `<span class="rank" aria-hidden="true">${rank}</span>` : ""}
+      ${rank ? `<span class="rank ${rank >= 10 ? "two" : ""}" aria-hidden="true">${rank}</span>` : ""}
       <div class="art" data-bg="${esc(m.cover || "")}">${score}${dub}<span data-lib></span></div>
       <div class="name">${esc(showTitle(m))}</div>
       <div class="sub">${esc(sub)}</div>
