@@ -271,18 +271,42 @@ input::placeholder { color: var(--muted); opacity: .8; }
   display: flex; align-items: flex-end; padding: 22px;
   background: var(--surface-2); color: #fff;
 }
-.feature .bg { position: absolute; inset: 0; z-index: -2; background: center 30% / cover no-repeat; transform: scale(1.06); animation: kenburns 22s ease-in-out infinite alternate; will-change: transform; }
+.feature .slides { position: absolute; inset: 0; }
+.feature .slide { position: absolute; inset: 0; isolation: isolate; display: flex; align-items: flex-end; padding: 22px 22px 58px;
+  opacity: 0; visibility: hidden; transition: opacity .9s var(--ease), visibility 0s .9s; }
+.feature .slide.on { opacity: 1; visibility: visible; transition: opacity .9s var(--ease); }
+.feature .bg { position: absolute; inset: 0; z-index: -2; background: var(--surface-2) center 30% / cover no-repeat; transform: scale(1.06); will-change: transform; }
+.feature .slide.on .bg { animation: kenburns 22s ease-in-out infinite alternate; }
 .feature.offscreen .bg { animation-play-state: paused; }
-.feature::after { content: ""; position: absolute; inset: 0; z-index: -1;
+.feature .slide::after { content: ""; position: absolute; inset: 0; z-index: -1;
   background: linear-gradient(180deg, rgb(13 14 18 / 0%) 15%, rgb(13 14 18 / 55%) 55%, rgb(13 14 18 / 92%) 100%),
               linear-gradient(90deg, rgb(13 14 18 / 70%), transparent 70%); }
+.feature .slide.on .slide-text > * { animation: rise .7s var(--ease) both; }
+.feature .slide.on .slide-text > *:nth-child(2) { animation-delay: .06s; }
+.feature .slide.on .slide-text > *:nth-child(3) { animation-delay: .12s; }
+.feature .slide.on .slide-text > *:nth-child(4) { animation-delay: .18s; }
+.feature .btn.glass { background: rgb(255 255 255 / 14%); border-color: rgb(255 255 255 / 26%); color: #fff; backdrop-filter: blur(6px); box-shadow: none; }
+.feature .btn.glass:hover { background: rgb(255 255 255 / 24%); }
+.carousel-ui { position: absolute; left: 22px; right: 22px; bottom: 16px; z-index: 2; display: flex; align-items: center; gap: .6rem; }
+.carousel-ui .dots { display: flex; gap: .4rem; flex: 0 1 auto; min-width: 0; }
+.carousel-ui .dot { position: relative; flex: 0 1 46px; width: 46px; min-width: 14px; height: 5px; min-height: 0; padding: 0; border: 0; border-radius: 99px;
+  background: rgb(255 255 255 / 28%); overflow: hidden; cursor: pointer; }
+.carousel-ui .dot::before { content: ""; position: absolute; inset: -10px 0; }  /* bigger tap area */
+.carousel-ui .dot i { position: absolute; inset: 0; background: #fff; transform: scaleX(0); transform-origin: left; }
+.carousel-ui .dot.on i { animation: dot-fill 7s linear forwards; }
+.feature.paused .dot.on i, .feature.offscreen .dot.on i, .feature.hidden-tab .dot.on i { animation-play-state: paused; }
+.feature.still .dot.on i { animation: none; transform: scaleX(1); }
+.carousel-ui .fbtn { width: 34px; height: 34px; min-height: 0; padding: 0; display: grid; place-items: center; border-radius: 50%;
+  border: 1px solid rgb(255 255 255 / 26%); background: rgb(13 14 18 / 35%); color: #fff; backdrop-filter: blur(6px); }
+.carousel-ui .fbtn:hover { background: rgb(255 255 255 / 20%); }
+.carousel-ui .fbtn .i { width: 16px; height: 16px; }
+@keyframes dot-fill { to { transform: scaleX(1); } }
 .feature .eyebrow { display: inline-flex; align-items: center; gap: .4rem; font-size: .76rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #ffd8cf; }
 .feature h1 { font-size: clamp(1.9rem, 6vw, 3.6rem); max-width: 16ch; margin: .35rem 0 .45rem; color: #fff; text-wrap: balance; }
 .feature .meta { color: rgb(255 255 255 / 78%); font-size: .92rem; margin-bottom: 1rem; }
 .feature .row .btn, .feature .row button { box-shadow: 0 8px 24px -10px var(--accent); }
-@media (min-width: 768px) { .feature { min-height: 420px; padding: 40px; margin-top: 0; } }
-.feature > * { animation: rise .7s var(--ease) both; }
-.feature > *:nth-child(3) { animation-delay: .08s; }
+@media (min-width: 768px) { .feature { min-height: 420px; padding: 40px; margin-top: 0; }
+  .feature .slide { padding: 40px 40px 70px; } .carousel-ui { left: 40px; right: 40px; bottom: 24px; } }
 
 .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem 1rem; margin: .5rem 0 .9rem; }
 .section-head h2, .section-head h1 { margin: 0; }

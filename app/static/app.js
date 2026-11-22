@@ -334,6 +334,9 @@ const TIPS = [
   ['[data-media]', "Which Jellyfin/Plex account is this person's, for their Picked for you"],
   ['#surprise', "Open a random anime: a good way to find something new. On Discover it keeps to the genres you picked"],
   ['#again', "Pick another random anime"],
+  ['[data-go="-1"]', "Previous show"],
+  ['[data-go="1"]', "Next show"],
+  ['.dot', "Jump to this show"],
   ['.chip', "Show anime of this genre"],
   ['[data-sort="rated"]', "Best scored by fans first"],
   ['[data-sort="newest"]', "Most recently started first"],
@@ -790,6 +793,84 @@ function markLibrary(el, items) {
   });
 }
 
+// The top of Browse: the most trending shows with wide artwork, one after another on a timer.
+// Each dot fills up while its slide shows; the timer pauses while you hover, while the banner
+// is off screen or the tab is hidden, and doesn't run at all with reduced motion. Each show
+// stays 7 seconds (the dot-fill animation in app.css).
+function featureCarousel(feature, items) {
+  const slides = items.map((m, i) => ({ m, rank: i + 1 })).filter(({ m }) => m.banner).slice(0, 6);
+  if (!slides.length) slides.push({ m: items[0], rank: 1 });
+  feature.innerHTML = `
+    <div class="slides">${slides.map(({ m, rank }, i) => `
+      <div class="slide ${i ? "" : "on"}" data-i="${i}" aria-hidden="${i ? "true" : "false"}">
+        <div class="bg" data-bg="${esc(m.banner || m.cover)}"></div>
+        <div class="slide-text">
+          <span class="eyebrow">${icon("spark")} #${rank} trending</span>
+          <h1>${esc(showTitle(m))}</h1>
+          <div class="meta">${esc([m.format?.replace("_", " "), m.year, m.episodes && `${m.episodes} episodes`, ...(m.genres || [])].filter(Boolean).join(" · "))}</div>
+          <div class="row"><a class="btn primary" href="#/anime?id=${m.id}" ${i ? 'tabindex="-1"' : ""}>${icon("arrow")}More info</a>
+            <a class="btn glass" href="#/search?q=${encodeURIComponent(m.english || m.romaji || m.title)}" ${i ? 'tabindex="-1"' : ""}>${icon("download")}Find episodes</a>
+            <span data-card="${m.id}"><span data-lib></span></span></div>
+        </div>
+      </div>`).join("")}</div>
+    ${slides.length > 1 ? `<div class="carousel-ui">
+      <button type="button" class="fbtn" data-go="-1" aria-label="Previous show">${icon("back")}</button>
+      <div class="dots" role="tablist">${slides.map((_, i) => `<button type="button" class="dot ${i ? "" : "on"}" data-i="${i}" aria-label="Show ${i + 1} of ${slides.length}"><i></i></button>`).join("")}</div>
+      <button type="button" class="fbtn" data-go="1" aria-label="Next show">${icon("arrow")}</button>
+    </div>` : ""}`;
+
+  const els = [...feature.querySelectorAll(".slide")];
+  const dots = [...feature.querySelectorAll(".dot")];
+  const showBg = (i) => {
+    const bg = els[i]?.querySelector(".bg[data-bg]");
+    if (bg) { bg.style.backgroundImage = `url(${JSON.stringify(bg.dataset.bg)})`; bg.removeAttribute("data-bg"); }
+  };
+  let current = 0;
+  const go = (i) => {
+    current = (i + els.length) % els.length;
+    els.forEach((el, k) => {
+      el.classList.toggle("on", k === current);
+      el.setAttribute("aria-hidden", k === current ? "false" : "true");
+      for (const a of el.querySelectorAll("a")) a.tabIndex = k === current ? 0 : -1;
+    });
+    dots.forEach((d) => d.classList.remove("on"));
+    void feature.offsetWidth;  // restart the dot's timer animation
+    dots[current]?.classList.add("on");
+    showBg(current);
+    showBg((current + 1) % els.length);  // the next banner loads ahead of time
+  };
+  showBg(0);
+  showBg(1);
+  pauseOffscreen(feature);
+  if (els.length < 2) return;
+
+  feature.addEventListener("click", (e) => {
+    const step = e.target.closest("[data-go]"), dot = e.target.closest(".dot");
+    if (step) go(current + Number(step.dataset.go));
+    else if (dot) go(Number(dot.dataset.i));
+  });
+  // The active dot's fill animation is the timer: when it ends, the next show slides in
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!reduced) feature.addEventListener("animationend", (e) => { if (e.animationName === "dot-fill") go(current + 1); });
+  else feature.classList.add("still");
+  const pause = (on) => feature.classList.toggle("paused", on);
+  feature.addEventListener("pointerenter", (e) => { if (e.pointerType === "mouse") pause(true); });
+  feature.addEventListener("pointerleave", () => pause(false));
+  feature.addEventListener("focusin", () => pause(true));
+  feature.addEventListener("focusout", () => pause(false));
+  const onVisible = () => { if (!feature.isConnected) return document.removeEventListener("visibilitychange", onVisible); feature.classList.toggle("hidden-tab", document.hidden); };
+  document.addEventListener("visibilitychange", onVisible);
+  // Swipe on phones
+  let startX = null;
+  feature.addEventListener("touchstart", (e) => { startX = e.touches[0].clientX; }, { passive: true });
+  feature.addEventListener("touchend", (e) => {
+    if (startX === null) return;
+    const dx = e.changedTouches[0].clientX - startX;
+    startX = null;
+    if (Math.abs(dx) > 45) go(current + (dx < 0 ? 1 : -1));
+  }, { passive: true });
+}
+
 // The banner's slow zoom only runs while it's on screen
 function pauseOffscreen(el) {
   if (!el || !("IntersectionObserver" in window)) return;
@@ -868,16 +949,7 @@ async function browseView() {
     const shelf = $("#trending"), feature = $("#feature");
     if (!shelf) return;
     if (!items.length) { shelf.outerHTML = `<p class="muted">${esc(error || "Nothing to show.")}</p>`; feature.remove(); return; }
-    // The most popular show with wide artwork leads the page
-    const top = items.find((m) => m.banner) || items[0];
-    feature.innerHTML = `
-      <div class="bg" style="background-image:url('${esc(top.banner || top.cover)}')"></div>
-      <div>
-        <span class="eyebrow">${icon("spark")} #${items.indexOf(top) + 1} trending</span>
-        <h1>${esc(showTitle(top))}</h1>
-        <div class="meta">${esc([top.format?.replace("_", " "), top.year, top.episodes && `${top.episodes} episodes`, ...(top.genres || [])].filter(Boolean).join(" · "))}</div>
-        <div class="row"><a class="btn primary" href="#/search?q=${encodeURIComponent(top.english || top.romaji)}">${icon("search")}Find episodes</a><span data-card="${top.id}"><span data-lib></span></span></div>
-      </div>`;
+    featureCarousel(feature, items);
     shelf.innerHTML = items.slice(0, 10).map((m, k) => posterCard(m, k, { rank: k + 1 })).join("")
       + items.slice(10).map((m, k) => posterCard(m, k + 10)).join("");
     lazyImages(shelf, shelf);
@@ -980,8 +1052,10 @@ async function discoverView() {
   view.innerHTML = `
     <div class="section-head"><h1>Discover</h1>
       <button class="primary small" id="surprise">${icon("dice")}<span>Surprise me</span></button></div>
-    <p class="hint" style="margin-top:-.5rem">Pick genres to narrow it down. Shows must have every genre you pick.</p>
-    <div class="chips-row wrap" id="genres">${'<span class="chip skel" style="width:84px">&nbsp;</span>'.repeat(12)}</div>
+    <div class="section-head" style="margin:-.5rem 0 .6rem">
+      <p class="hint" style="margin:0">Pick genres to narrow it down. Shows must have every genre you pick.</p>
+      ${shelfNav("genres").replace('class="shelf-nav"', 'class="shelf-nav always"')}</div>
+    <div class="chips-row" id="genres">${'<span class="chip skel" style="width:84px">&nbsp;</span>'.repeat(12)}</div>
     <div class="discover-filters">
       <div class="segmented" role="group" aria-label="Sort">${Object.entries(SORT_LABEL).map(([k, v]) =>
         `<button type="button" data-sort="${k}" class="${state.sort === k ? "on" : ""}">${v}</button>`).join("")}</div>
@@ -1042,6 +1116,8 @@ async function discoverView() {
     const row = $("#genres");
     if (!row) return;
     row.innerHTML = genres.map((g) => genreChip(g, state.genre.includes(g), "button")).join("");
+    scrollHints(row);
+    row.querySelector(".chip.on")?.scrollIntoView({ block: "nearest", inline: "center" });
     row.addEventListener("click", (e) => {
       const chip = e.target.closest("[data-genre]");
       if (!chip) return;
@@ -1063,6 +1139,9 @@ async function discoverView() {
     $(id).addEventListener("change", (e) => { state[key] = e.target.value; apply(); });
   }
   $("#surprise").addEventListener("click", (e) => surprise(e.currentTarget, filters()));
+  for (const b of $$("[data-shelf]")) {
+    b.addEventListener("click", () => { const row = $(`#${b.dataset.for}`); row.scrollBy({ left: Number(b.dataset.shelf) * row.clientWidth * .8, behavior: "smooth" }); });
+  }
   load(true);
 }
 

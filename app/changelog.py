@@ -5,6 +5,16 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "0.10.2",
+        "title": "A rotating spotlight",
+        "items": [
+            "The big banner at the top of Browse now cycles through the six most trending shows, a new one every "
+            "7 seconds. Use the arrows or dots (or swipe on a phone) to move between them; hovering pauses it.",
+            "Each one has More info (its anime page) and Find episodes.",
+            "The genres on Discover are one scrolling row with arrows, like on Browse.",
+        ],
+    },
+    {
         "version": "0.10.1",
         "title": "Scroll through genres",
         "items": ["The genre row on Browse has arrows to scroll through every genre, and fades at the edge that has "
