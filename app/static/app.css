@@ -314,3 +314,20 @@ button.following { color: var(--accent); border-color: var(--accent); }
 .tip { position: fixed; z-index: 60; max-width: min(280px, calc(100vw - 16px)); padding: .45rem .65rem; border-radius: 8px;
   background: var(--text); color: var(--bg); font-size: .82rem; line-height: 1.35; font-weight: 500;
   box-shadow: var(--shadow); pointer-events: none; }
+
+.whatsnew { margin: 1rem 0; padding: .8rem 1rem; border-radius: 12px; background: var(--surface-2); }
+.whatsnew h3 { margin: .15rem 0 .4rem; }
+.whatsnew ul { margin: 0; padding-left: 1.2rem; }
+.whatsnew li { margin: .25rem 0; }
+
+.tour { position: fixed; inset: 0; z-index: 70; }
+.tour-spot { position: fixed; border-radius: 12px; box-shadow: 0 0 0 9999px rgb(0 0 0 / 55%); transition: all .25s ease;
+  outline: 2px solid var(--accent); pointer-events: none; }
+.tour-pop { position: fixed; width: min(340px, calc(100vw - 24px)); padding: 14px 16px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); transition: top .25s, left .25s; }
+.tour-pop h3 { margin: .2rem 0 .4rem; font-size: 1.05rem; }
+.tour-pop p { margin: 0 0 .75rem; font-size: .93rem; }
+
+.banner { background: var(--accent-soft); border-bottom: 1px solid var(--border); }
+.banner-inner { max-width: 1180px; margin: 0 auto; padding: 8px 16px; display: flex; flex-wrap: wrap; gap: .5rem .75rem; align-items: center; font-size: .92rem; }
+.banner .muted { color: var(--muted); }

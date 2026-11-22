@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS users (
     disabled             INTEGER NOT NULL DEFAULT 0,
     must_change_password INTEGER NOT NULL DEFAULT 0,
     created_at           INTEGER NOT NULL DEFAULT 0,
-    last_login_at        INTEGER NOT NULL DEFAULT 0
+    last_login_at        INTEGER NOT NULL DEFAULT 0,
+    last_seen_version    TEXT NOT NULL DEFAULT '',   -- newest "What's new" this user has seen
+    tour_done            INTEGER NOT NULL DEFAULT 0
 );
 
 -- Only a SHA-256 of each session token is stored, so a copy of the database can't log anyone in
@@ -75,6 +77,8 @@ CREATE TABLE IF NOT EXISTS batches (
     notified       INTEGER NOT NULL DEFAULT 0,
     created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
     follow_id      INTEGER REFERENCES follows(id) ON DELETE SET NULL,
+    scanned_at     INTEGER NOT NULL DEFAULT 0,   -- when the media server was asked to scan it
+    scanned_with   TEXT NOT NULL DEFAULT '',     -- e.g. "Jellyfin (Anime library)"
     created_at     INTEGER NOT NULL
 );
 
@@ -134,6 +138,8 @@ DEFAULT_SETTINGS = {
     "setup_step": 0,
     "mode": "sub",
     "both_default": "sub",   # with sub+dub files: which audio plays first
+    "auto_update": False,
+    "auto_update_tried": ["", 0],
     "quality": "best",
     "concurrency": 1,
     "naming": "server",
@@ -179,6 +185,11 @@ MIGRATIONS = [
     ("users", "last_login_at", "INTEGER NOT NULL DEFAULT 0"),
     ("batches", "created_by", "INTEGER REFERENCES users(id) ON DELETE SET NULL"),
     ("batches", "follow_id", "INTEGER REFERENCES follows(id) ON DELETE SET NULL"),
+    ("users", "last_seen_version", "TEXT NOT NULL DEFAULT ''"),
+    ("batches", "scanned_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("batches", "scanned_with", "TEXT NOT NULL DEFAULT ''"),
+    # People who used AniStash before the tour existed don't need it pushed on them
+    ("users", "tour_done", "INTEGER NOT NULL DEFAULT 1"),
 ]
 
 

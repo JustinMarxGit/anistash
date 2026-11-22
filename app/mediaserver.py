@@ -11,6 +11,7 @@ and go out together, so a busy queue doesn't trigger a scan per file.
 
 import asyncio
 import logging
+import time
 
 import httpx
 
@@ -210,11 +211,13 @@ async def flush() -> None:
         if whole_library or kind == "plex":
             library_id = await ensure_library()
         await _scan(kind, library_id, folders, whole_library)
-        log.info("Asked %s to scan %s", _label(kind),
-                 f"the {db.get_setting('media_library_name') or library_id} library" if whole_library
-                 else f"{len(folders)} folder(s)")
+        library_name = db.get_setting("media_library_name") or library_id
+        what = f"{_label(kind)} ({library_name} library)" if whole_library or kind == "plex" else f"{_label(kind)} (just the new folders)"
+        log.info("Asked %s to scan", what)
         for batch_id in batches:
-            db.execute("UPDATE batches SET warning = '' WHERE id = ? AND warning LIKE '%scan failed%'", (batch_id,))
+            db.execute("UPDATE batches SET scanned_at = ?, scanned_with = ?, "
+                       "warning = CASE WHEN warning LIKE '%scan failed%' THEN '' ELSE warning END WHERE id = ?",
+                       (int(time.time()), what, batch_id))
     except MediaServerError as exc:
         # Never fails a download: the batch just shows a warning
         log.warning("%s scan failed: %s", _label(kind), exc)

@@ -228,6 +228,7 @@ const TIPS = [
   ['#ms-test', "Check the address and key work, and load your libraries"],
   ['#update-tools', "Get the newest ani-cli and yt-dlp. This fixes most search and download problems"],
   ['#update-app', "Install the newest AniStash. Your settings, users and downloads stay"],
+  ['#auto-update', "Install new AniStash versions by themselves, while nothing is downloading"],
   ['#logout', "Sign out on this device"],
   ['#logout-all', "Sign out on every device, for example if you lost a phone"],
   ['[data-generate]', "Make a strong random password"],
@@ -239,6 +240,8 @@ const TIPS = [
   ['#recheck', "Run the system check again"],
   ['#skip', "Skip this step for now. You can set it up later in Settings"],
   ['#pw-logout', "Sign out without changing the password"],
+  ['#replay-tour', "Walk through the short guided tour of AniStash again"],
+  ['#show-changes', "See what changed in each AniStash update"],
 ];
 
 const tipEl = document.createElement("div");
@@ -306,6 +309,146 @@ window.addEventListener("scroll", hideTip, { passive: true });
 new MutationObserver(() => applyTips()).observe(document.body, { childList: true, subtree: true });
 applyTips();
 
+// What's new and the guided tour ------------------------------------------------------
+
+async function showWhatsNew({ all = false } = {}) {
+  let data;
+  try { data = await api(`/api/account/whats-new${all ? "?all=1" : ""}`); } catch { return; }
+  if (!data.entries.length) return;
+  const sh = sheet(`
+    <h2>What's new in AniStash</h2>
+    ${data.entries.map((e) => `
+      <div class="whatsnew">
+        <div class="muted small">Version ${esc(e.version)}</div>
+        <h3>${esc(e.title)}</h3>
+        <ul>${e.items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>
+      </div>`).join("")}
+    <button class="primary block" data-close>Got it</button>`);
+  const close = () => { sh.remove(); if (!all) api("/api/account/whats-new/seen", { method: "POST" }).catch(() => {}); };
+  sh.querySelector("[data-close]").onclick = close;
+  sh.addEventListener("click", (e) => { if (e.target === sh) close(); });
+}
+
+function tourSteps() {
+  const admin = can.admin(), downloads = can.download();
+  return [
+    { route: "#/", title: "Welcome to AniStash 👋",
+      text: "This quick tour shows you around. It takes about a minute, and you can skip it any time." },
+    { route: "#/", el: '[data-nav="browse"]', title: "Browse",
+      text: "What's trending and what's airing this season. Shows you already have get a green ✓ In library badge." },
+    { route: "#/", el: ".poster", title: "Found something?",
+      text: "Tap a poster to look it up and see its seasons and episodes." },
+    { route: "#/search", el: "#search", title: "Search",
+      text: "Type a show's name and press Search. Tap a result to open it." },
+    { route: "#/search", el: ".segmented[aria-label=Audio]", title: "Sub, Dub or both",
+      text: "Japanese with subtitles, English audio, or Sub + Dub: one file with both languages, so you can switch in Jellyfin or Plex." },
+    downloads
+      ? { title: "Downloading a show",
+          text: "On a show's page, tick the episodes you want (or tap All) and press Download. Tap ☆ Follow and new episodes will download by themselves as they come out, new seasons too." }
+      : { title: "Watching", text: "Your account can browse and search. Ask an admin if you'd like to download too." },
+    { route: "#/downloads", el: '[data-tabto="queue"]', title: "Downloads",
+      text: "See what's downloading and what's finished. Finished episodes go straight to your NAS, and Jellyfin/Plex is told about them." },
+    { route: "#/downloads", el: '[data-tabto="following"]', title: "Following",
+      text: "Shows you follow, when their next episode airs, and when AniStash last checked." },
+    { route: "#/settings", el: admin ? "#locs" : "#pw", title: "Settings",
+      text: admin ? "Where downloads are saved, Jellyfin/Plex, users, your password and updates all live in Settings."
+                  : "Change your password and see where you're signed in." },
+    { route: "#/", title: "One last tip",
+      text: "Not sure what a button does? Hover over it, or press and hold it on a phone, and it explains itself. Enjoy!" },
+  ];
+}
+
+let tour = null;
+
+async function waitFor(selector, ms = 6000) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    const el = document.querySelector(selector);
+    if (el && el.offsetParent !== null) return el;
+    await new Promise((r) => setTimeout(r, 120));
+  }
+  return null;
+}
+
+async function startTour() {
+  if (tour) return;
+  tour = { steps: tourSteps(), at: 0 };
+  tour.root = document.createElement("div");
+  tour.root.className = "tour";
+  tour.root.innerHTML = `<div class="tour-spot"></div><div class="tour-pop" role="dialog" aria-live="polite"></div>`;
+  document.body.append(tour.root);
+  window.addEventListener("resize", placeTour);
+  window.addEventListener("scroll", placeTour, { passive: true });
+  await showTourStep(0);
+}
+
+function endTour(done = true) {
+  if (!tour) return;
+  tour.root.remove();
+  window.removeEventListener("resize", placeTour);
+  window.removeEventListener("scroll", placeTour);
+  tour = null;
+  if (done) api("/api/account/tour", { method: "POST", body: { done: true } }).catch(() => {});
+}
+
+async function showTourStep(i) {
+  if (!tour) return;
+  tour.at = Math.max(0, Math.min(i, tour.steps.length - 1));
+  const step = tour.steps[tour.at];
+  const pop = tour.root.querySelector(".tour-pop");
+  if (step.route && !location.hash.startsWith(step.route) && !(step.route === "#/" && ["", "#", "#/"].includes(location.hash))) {
+    location.hash = step.route;
+  }
+  tour.target = step.el ? await waitFor(step.el) : null;
+  if (!tour) return;
+  tour.target?.scrollIntoView({ block: "center", behavior: "instant" });
+  const last = tour.at === tour.steps.length - 1;
+  pop.innerHTML = `
+    <div class="muted small">${tour.at + 1} of ${tour.steps.length}</div>
+    <h3>${esc(step.title)}</h3>
+    <p>${esc(step.text)}</p>
+    <div class="row">
+      <button class="ghost small" data-tour="skip">${last ? "" : "Skip tour"}</button>
+      <span class="grow"></span>
+      ${tour.at ? `<button class="small" data-tour="back">Back</button>` : ""}
+      <button class="primary small" data-tour="next">${last ? "Finish" : "Next"}</button>
+    </div>`;
+  pop.querySelector('[data-tour="skip"]').hidden = last;
+  pop.querySelector('[data-tour="next"]').onclick = () => (last ? endTour() : showTourStep(tour.at + 1));
+  pop.querySelector('[data-tour="back"]')?.addEventListener("click", () => showTourStep(tour.at - 1));
+  pop.querySelector('[data-tour="skip"]').onclick = () => endTour();
+  placeTour();
+  pop.querySelector('[data-tour="next"]').focus({ preventScroll: true });
+}
+
+function placeTour() {
+  if (!tour) return;
+  const spot = tour.root.querySelector(".tour-spot");
+  const pop = tour.root.querySelector(".tour-pop");
+  const target = tour.target;
+  if (!target || !document.contains(target)) {
+    // No element for this step: a dimmed screen with the card in the middle
+    Object.assign(spot.style, { left: "50%", top: "50%", width: "0px", height: "0px" });
+    pop.style.left = `${Math.max(12, (window.innerWidth - pop.offsetWidth) / 2)}px`;
+    pop.style.top = `${Math.max(12, (window.innerHeight - pop.offsetHeight) / 2)}px`;
+    return;
+  }
+  const r = target.getBoundingClientRect();
+  const pad = 6;
+  Object.assign(spot.style, { left: `${r.left - pad}px`, top: `${r.top - pad}px`, width: `${r.width + pad * 2}px`, height: `${r.height + pad * 2}px` });
+  const below = r.bottom + pad + 12;
+  const top = below + pop.offsetHeight < window.innerHeight - 8 ? below : Math.max(8, r.top - pad - 12 - pop.offsetHeight);
+  pop.style.top = `${top}px`;
+  pop.style.left = `${Math.max(12, Math.min(r.left + r.width / 2 - pop.offsetWidth / 2, window.innerWidth - pop.offsetWidth - 12))}px`;
+}
+
+document.addEventListener("keydown", (e) => {
+  if (!tour) return;
+  if (e.key === "Escape") endTour();
+  if (e.key === "ArrowRight") showTourStep(tour.at + 1);
+  if (e.key === "ArrowLeft") showTourStep(tour.at - 1);
+});
+
 // Router ----------------------------------------------------------------------
 
 const routes = {
@@ -351,7 +494,13 @@ async function route() {
   if (ready && !badgeTimer) { refreshBadge(); badgeTimer = setInterval(refreshBadge, 10000); }
   if (ready && !prefs) prefs = await api("/api/settings").catch(() => null);
   window.scrollTo(0, 0);
-  (routes[name] || browseView)();
+  await (routes[name] || browseView)();
+  if (ready && !route.bannerChecked) { route.bannerChecked = true; refreshUpdateBanner(); }
+  // Once per person: what changed since their last visit, or the tour for newcomers
+  if (ready && !tour && !document.querySelector(".sheet-backdrop")) {
+    if (status.user?.whats_new && !route.whatsNewShown) { route.whatsNewShown = true; showWhatsNew(); }
+    else if (status.user && !status.user.tour_done && !route.tourShown && name === "") { route.tourShown = true; startTour(); }
+  }
 }
 
 async function refreshBadge() {
@@ -1007,6 +1156,7 @@ async function renderQueue() {
         </div>
         ${state}
       </div>
+      ${b.scanned_at && !b.warning ? `<div class="muted small" style="margin:-6px 14px 12px" data-tip="Your media server was asked to look for these episodes. It can take a minute or two for them to appear">✓ Sent to ${esc(b.scanned_with)} · ${relTime(b.scanned_at)}</div>` : ""}
       ${b.warning ? `<div class="warn-box" style="margin:0 14px 12px">${esc(b.warning)}
         ${mine && /scan failed/.test(b.warning) ? `<div style="margin-top:.5rem"><button class="small" data-b="rescan">Scan now</button></div>` : ""}</div>` : ""}
       ${open ? `
@@ -1509,10 +1659,15 @@ function accountCard() {
       <div id="sessions" class="muted small">${loading()}</div>
       <div class="row" style="margin-top:.75rem"><button type="button" id="logout" class="ghost">Log out</button>
         <button type="button" id="logout-all" class="danger small">Log out on all devices</button></div>
+      <h3 style="margin-top:1rem">Help</h3>
+      <div class="row"><button type="button" class="small" id="replay-tour">Show the tour again</button>
+        <button type="button" class="small" id="show-changes">What's new</button></div>
     </form>`;
 }
 
 function bindAccountCard() {
+  $("#replay-tour").addEventListener("click", () => { location.hash = "#/"; setTimeout(startTour, 300); });
+  $("#show-changes").addEventListener("click", () => showWhatsNew({ all: true }));
   $("#pw").addEventListener("submit", async (e) => {
     e.preventDefault();
     try { await busy(e.submitter, () => api("/api/account/password", { method: "POST", body: formData(e.target) })); toast("Password changed. Other devices were signed out."); e.target.reset(); }
@@ -1684,6 +1839,9 @@ async function settingsView() {
         <div class="row" style="margin-top:.5rem"><button class="primary small" id="update-app" ${sys.helper ? "" : "disabled"}>Update AniStash</button>
         <a class="small" href="https://github.com/JustinMarxGit/anistash/releases" target="_blank" rel="noopener">What's new</a></div></div>` : ""}
       <p class="muted small">If searches or downloads start failing, the anime site probably changed. Updating ani-cli usually fixes it. Tools also update weekly on their own.</p>
+      <label class="check"><input type="checkbox" id="auto-update" ${s.auto_update ? "checked" : ""} ${sys.helper ? "" : "disabled"}>
+        Install AniStash updates automatically</label>
+      <p class="hint" style="margin-top:0">Checks for a new version every 30 minutes and installs it while nothing is downloading. If an update fails, the previous version is put back. When this is off, admins see a banner instead.</p>
       <button id="update-tools" ${sys.helper ? "" : "disabled"}>Update ani-cli and yt-dlp</button>
       <pre id="update-out" class="small muted" style="white-space:pre-wrap" hidden></pre>
     </div>
@@ -1718,21 +1876,55 @@ async function settingsView() {
       toast("Update finished");
     } catch (err) { toast(err.message, true); }
   });
-  $("#update-app")?.addEventListener("click", async (e) => {
-    if (!confirm(`Update AniStash to ${sys.latest}? The page reconnects when it's done; running downloads restart.`)) return;
+  $("#update-app")?.addEventListener("click", (e) => runUpdate(sys.latest, e.currentTarget));
+  $("#auto-update").addEventListener("change", async (e) => {
     try {
-      await busy(e.currentTarget, () => api("/api/system/update-app", { method: "POST" }));
-      toast("Updating… this page reloads when AniStash is back.");
-      // The service restarts during the update: wait for the new version to answer
-      const started = Date.now();
-      const poll = setInterval(async () => {
-        try {
-          const s2 = await api("/api/status");
-          if (s2.version !== status.version) { clearInterval(poll); location.reload(); }
-        } catch { /* restarting */ }
-        if (Date.now() - started > 300000) { clearInterval(poll); toast("The update is taking long. Check `anistash-update` in the console.", true); }
-      }, 3000);
-    } catch (err) { toast(err.message, true); }
+      prefs = await api("/api/settings", { method: "PUT", body: { auto_update: e.target.checked } });
+      toast(e.target.checked ? "Updates will install automatically" : "Automatic updates are off. You'll see a banner when one is available");
+      refreshUpdateBanner();
+    } catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; }
+  });
+}
+
+// Updates (admins only) ---------------------------------------------------------------------------
+
+async function runUpdate(latest, button) {
+  if (!confirm(`Update AniStash to ${latest}? It takes a minute or two and this page reloads when it's done. Running downloads restart.`)) return;
+  try {
+    await busy(button, () => api("/api/system/update-app", { method: "POST" }));
+    toast("Updating… this page reloads when AniStash is back.");
+    // The service restarts during the update: wait for the new version to answer
+    const started = Date.now();
+    const poll = setInterval(async () => {
+      try {
+        const s2 = await api("/api/status");
+        if (s2.version !== status.version) { clearInterval(poll); location.reload(); }
+      } catch { /* restarting */ }
+      if (Date.now() - started > 300000) { clearInterval(poll); toast("The update is taking long. Check `anistash-update` in the console.", true); }
+    }, 3000);
+  } catch (err) { toast(err.message, true); }
+}
+
+async function refreshUpdateBanner() {
+  const banner = document.getElementById("banner");
+  if (!can.admin() || !status?.setup_complete) { banner.hidden = true; return; }
+  let info;
+  try { info = await api("/api/system/update-status"); } catch { return; }
+  let dismissed = "";
+  try { dismissed = sessionStorage.getItem("anistash-banner-dismissed") || ""; } catch { /* storage blocked */ }
+  if (!info.update_available || info.auto_update || dismissed === info.latest) { banner.hidden = true; return; }
+  banner.hidden = false;
+  banner.innerHTML = `<div class="banner-inner">
+    <span class="grow">⬆️ <b>AniStash ${esc(info.latest)} is available</b> <span class="muted">(you have v${esc(info.current)})</span></span>
+    <a class="small" href="https://github.com/JustinMarxGit/anistash/releases/tag/${encodeURIComponent(info.latest)}" target="_blank" rel="noopener"
+       data-tip="Read what this update changes (opens GitHub)">What's new</a>
+    ${info.can_update ? `<button class="primary small" id="banner-update" data-tip="Install the update now. Your settings, users and downloads stay">Update now</button>` : ""}
+    <button class="ghost small icon" id="banner-close" aria-label="Hide until next visit" data-tip="Hide this until you next open AniStash">✕</button>
+  </div>`;
+  $("#banner-update", banner)?.addEventListener("click", (e) => runUpdate(info.latest, e.currentTarget));
+  $("#banner-close", banner).addEventListener("click", () => {
+    banner.hidden = true;
+    try { sessionStorage.setItem("anistash-banner-dismissed", info.latest); } catch { /* storage blocked */ }
   });
 }
 
@@ -1876,7 +2068,10 @@ async function setupView() {
     }
 
     if (step === 4) {
-      view.innerHTML = frame("Download defaults", `<form id="defaults">${defaultsForm(settings)}</form>
+      view.innerHTML = frame("Download defaults", `<form id="defaults">${defaultsForm(settings)}
+          <h3 style="margin-top:1rem">Updates</h3>
+          <label class="check"><input type="checkbox" name="auto_update" ${settings.auto_update || !status.setup_complete ? "checked" : ""}> Install AniStash updates automatically (recommended)</label>
+          <p class="hint" style="margin-top:0">New versions install themselves while nothing is downloading, and roll back if something goes wrong. Turn it off to update by hand from a banner instead.</p></form>
         <p class="muted small">You can change these for each download, and here later under Settings.</p>`, { next: "Save & continue" });
       bindBack();
       $("#next").addEventListener("click", async (e) => {
@@ -1896,6 +2091,7 @@ async function setupView() {
           <dt>Admin</dt><dd>${esc(status.username || "")}</dd>
           <dt>Locations</dt><dd>${locs.map((l) => `${esc(l.name)}${l.is_default ? " (default)" : ""}`).join("<br>") || "none"}</dd>
           <dt>Media server</dt><dd>${settings.media_server !== "none" ? `${serverName(settings.media_server)} at ${esc(settings.media_url)} · ${settings.media_refresh === "off" ? "scanning off" : `scans ${esc(settings.media_library_name || "nothing (no library chosen)")} when ${settings.media_refresh === "episode" ? "each episode" : "each season"} finishes`}` : "none"}</dd>
+          <dt>Updates</dt><dd>${settings.auto_update ? "install automatically" : "manual (banner when available)"}</dd>
           <dt>Defaults</dt><dd>${esc(settings.mode)} · ${esc(settings.quality)} · ${settings.concurrency} at once · ${esc(settings.naming)} naming</dd>
         </dl>
         <p class="muted">Tip: on your phone, use "Add to Home Screen" to open AniStash like an app.</p>`, { next: "Finish" });

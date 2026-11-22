@@ -164,8 +164,8 @@ media_server() {
 }
 
 defaults() {
-    local mode quality conc naming skip refresh
-    mode="$(whiptail --title "$TITLE" --menu "Audio:" 12 50 2 sub "Subtitled" dub "Dubbed" 3>&1 1>&2 2>&3)" || return 1
+    local mode quality conc naming skip refresh auto
+    mode="$(whiptail --title "$TITLE" --menu "Audio:" 13 70 3 sub "Subtitled (Japanese audio)" dub "Dubbed (English audio)" both "Sub + Dub in one file" 3>&1 1>&2 2>&3)" || return 1
     quality="$(whiptail --title "$TITLE" --menu "Quality (falls back to the next lower one if a download fails):" 16 72 6 \
         best "Highest available" 1080 "Up to 1080p" 720 "Up to 720p" 480 "Up to 480p" 360 "Up to 360p" worst "Smallest" 3>&1 1>&2 2>&3)" || return 1
     conc="$(whiptail --title "$TITLE" --menu "Downloads at once:" 14 40 5 1 "" 2 "" 3 "" 4 "" 5 "" 3>&1 1>&2 2>&3)" || return 1
@@ -175,8 +175,9 @@ defaults() {
     if yesno "Skip episodes that are already downloaded?"; then skip=true; else skip=false; fi
     refresh="$(whiptail --title "$TITLE" --menu "When to ask the media server to scan:" 12 60 3 \
         season "When a season finishes" episode "After every episode" off "Never" 3>&1 1>&2 2>&3)" || return 1
-    python3 -c 'import json,sys; m,q,c,n,s,r=sys.argv[1:]; print(json.dumps({"mode":m,"quality":q,"concurrency":int(c),"naming":n,"skip_existing":s=="true","media_refresh":r}))' \
-        "$mode" "$quality" "$conc" "$naming" "$skip" "$refresh" | show set-defaults
+    if yesno "Install AniStash updates automatically? (recommended)\n\nNew versions install while nothing is downloading and roll back if something goes wrong. If you say no, admins see a banner in the web UI when an update is available."; then auto=true; else auto=false; fi
+    python3 -c 'import json,sys; m,q,c,n,s,r,a=sys.argv[1:]; print(json.dumps({"mode":m,"quality":q,"concurrency":int(c),"naming":n,"skip_existing":s=="true","media_refresh":r,"auto_update":a=="true"}))' \
+        "$mode" "$quality" "$conc" "$naming" "$skip" "$refresh" "$auto" | show set-defaults
 }
 
 full_setup() {

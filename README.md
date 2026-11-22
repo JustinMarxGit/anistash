@@ -18,7 +18,8 @@ AniStash runs in its own Proxmox LXC, created with one command on the Proxmox ho
 - **Jellyfin or Plex scans of the anime library only**: when a season finishes, AniStash scans just the new folders, or at most your chosen anime library. It never triggers a full scan.
 - **Phone-friendly**: works on a phone and can be added to the home screen as an app.
 - **Queue**: per-episode progress, cancel, retry and reorder. Episodes already on disk are skipped.
-- **Updates**: `anistash-update`, or one button in the web UI. ani-cli and yt-dlp update themselves weekly.
+- **Updates**: automatic if you like (admins choose in setup or Settings → System). Otherwise admins see a banner with *Update now*. After every update, each person sees a short *What's new*. ani-cli and yt-dlp update themselves weekly.
+- **Guided tour**: new users get a one-minute tour of the app. Replay it under Settings → Your account.
 
 ## Install (Proxmox VE)
 
@@ -109,6 +110,13 @@ How it's protected:
 Locked out? In the container console, run `anistash-setup --reset-password`. It sets a new password and lifts the lockout.
 
 For access from outside your home network, put AniStash behind a reverse proxy with HTTPS (the session cookie is marked `Secure` automatically when it sees HTTPS).
+
+## Updates
+
+- **Automatic** (Settings → System, or the setup wizard / `anistash-setup`): AniStash checks GitHub for a new release every 30 minutes. It installs it only while nothing is downloading. If the new version doesn't start, the previous one is put back, and that version isn't retried for 12 hours.
+- **Manual**: admins see a banner at the top of the page when a new version is out, with *Update now*. You can also run `anistash-update` in the container.
+- Only **admins** can see or start updates; the server refuses anyone else.
+- Each person sees a short **What's new** the first time they open AniStash after an update.
 
 ## Console commands (inside the LXC)
 

@@ -117,7 +117,7 @@ def snapshot() -> list[dict]:
             "title": b["title"],
             "mode": b["mode"], "quality": b["quality"], "location": b["location_name"], "warning": b["warning"],
             "created_at": b["created_at"], "created_by": b["created_by"], "owner": b["owner"] or "",
-            "follow_id": b["follow_id"],
+            "follow_id": b["follow_id"], "scanned_at": b["scanned_at"], "scanned_with": b["scanned_with"],
             "items": its, "counts": counts,
             "active": counts["queued"] + counts["running"] > 0,
         })

@@ -15,7 +15,8 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import anicli, anilist, auth, config, db, follows, jobs, library, locations, mediaserver, setup, shows
+from . import (anicli, anilist, auth, changelog, config, db, follows, jobs, library, locations, mediaserver, setup,
+               shows, updates)
 from .naming import base_title, number_seasons
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -27,9 +28,11 @@ async def lifespan(app: FastAPI):
     db.init()
     worker = asyncio.create_task(jobs.worker())
     scheduler = asyncio.create_task(follows.scheduler())
+    updater = asyncio.create_task(updates.scheduler())
     yield
     worker.cancel()
     scheduler.cancel()
+    updater.cancel()
     await mediaserver.flush()
 
 
@@ -143,7 +146,8 @@ def _me(user) -> dict | None:
     if not user:
         return None
     return {"id": user["id"], "username": user["username"], "role": user["role"],
-            "must_change_password": bool(user["must_change_password"])}
+            "must_change_password": bool(user["must_change_password"]), "tour_done": bool(user["tour_done"]),
+            "whats_new": bool(changelog.since(user["last_seen_version"], config.VERSION))}
 
 
 # Session and setup -------------------------------------------------------------
@@ -223,6 +227,24 @@ async def change_password(request: Request, current: str = Body(...), new: str =
     # All sessions were revoked; continue with a fresh one
     return _session_response({"ok": True}, auth.create_session(user["id"], client_ip(request),
                                                                request.headers.get("user-agent", "")), request)
+
+
+@app.get("/api/account/whats-new")
+async def whats_new(all: bool = False, user=VIEWER):
+    entries = changelog.CHANGELOG if all else changelog.since(user["last_seen_version"], config.VERSION)
+    return {"version": config.VERSION, "entries": entries}
+
+
+@app.post("/api/account/whats-new/seen")
+async def whats_new_seen(user=VIEWER):
+    db.execute("UPDATE users SET last_seen_version = ? WHERE id = ?", (config.VERSION, user["id"]))
+    return {"ok": True}
+
+
+@app.post("/api/account/tour")
+async def tour_state(done: bool = Body(True, embed=True), user=VIEWER):
+    db.execute("UPDATE users SET tour_done = ? WHERE id = ?", (int(done), user["id"]))
+    return {"ok": True}
 
 
 @app.get("/api/account/sessions")
@@ -345,9 +367,14 @@ async def system(user=ADMIN):
 
 @app.post("/api/system/update-app")
 async def update_app(request: Request, user=ADMIN):
-    await locations._helper("update-app")
-    auth.audit(user["username"], "update_started", "", client_ip(request))
+    await updates.start_update(user["username"], client_ip(request))
     return {"ok": True}
+
+
+@app.get("/api/system/update-status")
+async def update_status(user=ADMIN):
+    """For the "update available" banner: admins only, cheap (the release lookup is cached)."""
+    return {**await updates.info(), "can_update": config.helper_available()}
 
 
 @app.post("/api/system/update-tools")

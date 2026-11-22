@@ -97,6 +97,8 @@ def save_defaults(data: dict) -> dict:
         if data["mode"] not in ("sub", "dub", "both"):
             raise SetupError("Mode must be sub, dub or both.")
         values["mode"] = data["mode"]
+    if "auto_update" in data:
+        values["auto_update"] = bool(data["auto_update"])
     if "both_default" in data:
         if data["both_default"] not in ("sub", "dub"):
             raise SetupError("The default audio must be sub (Japanese) or dub (English).")
@@ -149,7 +151,7 @@ def public_settings() -> dict:
     """Settings safe to send to the browser (the Jellyfin key is reported as set/unset only)."""
     s = db.get_settings()
     return {
-        "mode": s["mode"], "both_default": s["both_default"], "quality": s["quality"], "concurrency": s["concurrency"], "naming": s["naming"],
+        "mode": s["mode"], "both_default": s["both_default"], "auto_update": bool(s["auto_update"]), "quality": s["quality"], "concurrency": s["concurrency"], "naming": s["naming"],
         "skip_existing": s["skip_existing"], "media_server": s["media_server"], "media_url": s["media_url"],
         "media_token_set": bool(s["media_token"]), "media_refresh": s["media_refresh"],
         "media_library_id": s["media_library_id"], "media_library_name": s["media_library_name"],

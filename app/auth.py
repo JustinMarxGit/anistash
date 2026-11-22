@@ -184,9 +184,12 @@ def create_user(username: str, password: str, role: str = "member", must_change:
     with db.tx() as conn:
         if conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
             raise AuthError(f"The username {username} is taken.")
+        # New people get the tour, not a list of changes from before they joined
+        from .config import VERSION
         return conn.execute(
-            "INSERT INTO users (username, password_hash, role, must_change_password, created_at) VALUES (?, ?, ?, ?, ?)",
-            (username, hash_password(password), role, int(must_change), int(time.time()))).lastrowid
+            "INSERT INTO users (username, password_hash, role, must_change_password, created_at, last_seen_version, "
+            "tour_done) VALUES (?, ?, ?, ?, ?, ?, 0)",
+            (username, hash_password(password), role, int(must_change), int(time.time()), VERSION)).lastrowid
 
 
 def update_user(user_id: int, role: str | None = None, disabled: bool | None = None) -> None:

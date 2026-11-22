@@ -198,7 +198,9 @@ def test_unmapped_location_without_saved_library_picks_anime(isolated, monkeypat
     run(scenario())
     server.shutdown()
     assert received[-1].startswith("/Items/a1/Refresh")  # the Anime library, chosen automatically
-    assert jobs.snapshot()[0]["warning"] == ""
+    batch = jobs.snapshot()[0]
+    assert batch["warning"] == "" and batch["scanned_at"] > 0
+    assert batch["scanned_with"] == "Jellyfin (Anime library)"
 
 
 def test_jellyfin_failure_becomes_batch_warning(location, monkeypatch):
