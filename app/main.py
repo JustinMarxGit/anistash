@@ -147,6 +147,7 @@ def _me(user) -> dict | None:
         return None
     return {"id": user["id"], "username": user["username"], "role": user["role"],
             "must_change_password": bool(user["must_change_password"]), "tour_done": bool(user["tour_done"]),
+            "title_lang": user["title_lang"],
             "whats_new": bool(changelog.since(user["last_seen_version"], config.VERSION))}
 
 
@@ -239,6 +240,14 @@ async def whats_new(all: bool = False, user=VIEWER):
 async def whats_new_seen(user=VIEWER):
     db.execute("UPDATE users SET last_seen_version = ? WHERE id = ?", (config.VERSION, user["id"]))
     return {"ok": True}
+
+
+@app.put("/api/account/preferences")
+async def preferences(title_lang: str = Body(..., embed=True), user=VIEWER):
+    if title_lang not in ("en", "ja"):
+        raise HTTPException(400, "Title language must be en (English) or ja (Japanese).")
+    db.execute("UPDATE users SET title_lang = ? WHERE id = ?", (title_lang, user["id"]))
+    return {"title_lang": title_lang}
 
 
 @app.post("/api/account/tour")
@@ -462,8 +471,26 @@ async def browse(kind: str, user=VIEWER):
 
 @app.get("/api/search")
 async def search(q: str, dub: bool = False, user=VIEWER):
-    results = await anicli.search(q, dub)
-    return {"results": [r.__dict__ for r in results]}
+    """Searches by what was typed and by the show's name in the other language (English ↔
+    Japanese), so either name finds it. Each result remembers which query found it."""
+    try:
+        others = await anilist.other_names(q)
+    except Exception:  # AniList being down only means no second-language search
+        others = []
+    queries = [q, *others[:2]]
+    found = await asyncio.gather(*(anicli.search(x, dub) for x in queries), return_exceptions=True)
+    if isinstance(found[0], Exception) and all(isinstance(f, Exception) or not f for f in found[1:]):
+        raise found[0]
+    results, seen = [], set()
+    for query, batch in zip(queries, found):
+        if isinstance(batch, Exception):
+            continue
+        for r in batch:
+            if r.title.lower() in seen:
+                continue
+            seen.add(r.title.lower())
+            results.append({**r.__dict__, "query": query, "key": f"{len(results)}"})
+    return {"results": results, "also_searched": others[:2]}
 
 
 @app.get("/api/meta")

@@ -86,7 +86,13 @@ function libraryBadge(m) {
     ? "Series in library"  // another season of it is, this one isn't
     : `In library${n ? ` · ${n} ep${n === 1 ? "" : "s"}` : ""}`;
   const { seasons: have, where } = librarySummary(m);
-  return `<span class="inlib" data-tip="${esc(`Already in your library${where ? ` ${where}` : ""}${have ? `: ${have}` : ""}`)}">✓ ${label}</span>`;
+  return `<span class="inlib" data-tip="${esc(`Already in your library${where ? ` ${where}` : ""}${have ? `: ${have}` : ""}`)}">${icon("check")}${label}</span>`;
+}
+
+const icon = (name, cls = "") => `<svg class="i ${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+
+function skeletonPosters(n) {
+  return Array.from({ length: n }, (_, k) => `<div class="poster" style="--i:${k}"><div class="art skel"></div><div class="skel skel-line"></div><div class="skel skel-line" style="width:60%"></div></div>`).join("");
 }
 
 function relTime(ts) {
@@ -241,6 +247,10 @@ const TIPS = [
   ['#skip', "Skip this step for now. You can set it up later in Settings"],
   ['#pw-logout', "Sign out without changing the password"],
   ['#replay-tour', "Walk through the short guided tour of AniStash again"],
+  ['[data-lang="en"]', "Show anime titles in English"],
+  ['[data-lang="ja"]', "Show anime titles in Japanese (romaji), e.g. Sousou no Frieren"],
+  ['[data-setlang="en"]', "Show anime titles in English"],
+  ['[data-setlang="ja"]', "Show anime titles in Japanese (romaji), e.g. Sousou no Frieren"],
   ['#show-changes', "See what changed in each AniStash update"],
 ];
 
@@ -332,10 +342,12 @@ async function showWhatsNew({ all = false } = {}) {
 function tourSteps() {
   const admin = can.admin(), downloads = can.download();
   return [
-    { route: "#/", title: "Welcome to AniStash 👋",
+    { route: "#/", title: "Welcome to AniStash",
       text: "This quick tour shows you around. It takes about a minute, and you can skip it any time." },
     { route: "#/", el: '[data-nav="browse"]', title: "Browse",
       text: "What's trending and what's airing this season. Shows you already have get a green ✓ In library badge." },
+    { route: "#/", el: "#langswitch", title: "English or Japanese titles",
+      text: "Switch every title between English and Japanese. Search finds a show by either name, whichever you pick." },
     { route: "#/", el: ".poster", title: "Found something?",
       text: "Tap a poster to look it up and see its seasons and episodes." },
     { route: "#/search", el: "#search", title: "Search",
@@ -344,7 +356,7 @@ function tourSteps() {
       text: "Japanese with subtitles, English audio, or Sub + Dub: one file with both languages, so you can switch in Jellyfin or Plex." },
     downloads
       ? { title: "Downloading a show",
-          text: "On a show's page, tick the episodes you want (or tap All) and press Download. Tap ☆ Follow and new episodes will download by themselves as they come out, new seasons too." }
+          text: "On a show's page, tick the episodes you want (or tap All) and press Download. Tap Follow and new episodes will download by themselves as they come out, new seasons too." }
       : { title: "Watching", text: "Your account can browse and search. Ask an admin if you'd like to download too." },
     { route: "#/downloads", el: '[data-tabto="queue"]', title: "Downloads",
       text: "See what's downloading and what's finished. Finished episodes go straight to your NAS, and Jellyfin/Plex is told about them." },
@@ -404,7 +416,8 @@ async function showTourStep(i) {
   tour.target?.scrollIntoView({ block: "center", behavior: "instant" });
   const last = tour.at === tour.steps.length - 1;
   pop.innerHTML = `
-    <div class="muted small">${tour.at + 1} of ${tour.steps.length}</div>
+    <div class="content">
+    <div class="tour-dots" aria-label="Step ${tour.at + 1} of ${tour.steps.length}">${tour.steps.map((_, k) => `<i class="${k === tour.at ? "on" : ""}"></i>`).join("")}</div>
     <h3>${esc(step.title)}</h3>
     <p>${esc(step.text)}</p>
     <div class="row">
@@ -412,6 +425,7 @@ async function showTourStep(i) {
       <span class="grow"></span>
       ${tour.at ? `<button class="small" data-tour="back">Back</button>` : ""}
       <button class="primary small" data-tour="next">${last ? "Finish" : "Next"}</button>
+    </div>
     </div>`;
   pop.querySelector('[data-tour="skip"]').hidden = last;
   pop.querySelector('[data-tour="next"]').onclick = () => (last ? endTour() : showTourStep(tour.at + 1));
@@ -491,6 +505,14 @@ async function route() {
   for (const a of $$("[data-nav]", nav)) {
     a.classList.toggle("active", a.dataset.nav === (name || "browse") || (name === "show" && a.dataset.nav === "search"));
   }
+  requestAnimationFrame(moveNavIndicator);
+  const lang = document.getElementById("langswitch");
+  lang.hidden = !ready;
+  for (const b of lang.querySelectorAll("[data-lang]")) b.classList.toggle("on", b.dataset.lang === titleLang());
+  // Every page slides in
+  view.classList.remove("enter");
+  void view.offsetWidth;
+  view.classList.add("enter");
   if (ready && !badgeTimer) { refreshBadge(); badgeTimer = setInterval(refreshBadge, 10000); }
   if (ready && !prefs) prefs = await api("/api/settings").catch(() => null);
   window.scrollTo(0, 0);
@@ -513,6 +535,33 @@ async function refreshBadge() {
   } catch { /* shown elsewhere */ }
 }
 
+// English / Japanese titles: saved per person, applied by re-rendering the page
+async function setTitleLang(lang) {
+  if (!status?.user || lang === titleLang()) return;
+  try {
+    await api("/api/account/preferences", { method: "PUT", body: { title_lang: lang } });
+    status.user.title_lang = lang;
+    toast(lang === "ja" ? "Showing Japanese titles" : "Showing English titles");
+    route();
+  } catch (err) { toast(err.message, true); }
+}
+document.getElementById("langswitch").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-lang]");
+  if (b) setTitleLang(b.dataset.lang);
+});
+
+// The highlight behind the active tab glides to it
+function moveNavIndicator() {
+  const ind = $(".nav-ind", nav), active = $("a.active", nav);
+  if (!ind) return;
+  if (!active || nav.hidden) { ind.style.opacity = "0"; return; }
+  ind.style.opacity = "1";
+  ind.style.left = `${active.offsetLeft}px`;
+  ind.style.width = `${active.offsetWidth}px`;
+}
+window.addEventListener("resize", moveNavIndicator);
+window.addEventListener("scroll", () => document.body.classList.toggle("scrolled", window.scrollY > 4), { passive: true });
+
 window.addEventListener("hashchange", route);
 route();
 
@@ -521,7 +570,8 @@ route();
 function loginView() {
   view.innerHTML = `
     <form class="login card" id="login">
-      <h1>Log in</h1>
+      <img class="seal" src="/static/icons/icon.svg" alt="">
+      <h1>Welcome back</h1>
       <p class="muted">Sign in with your AniStash account.</p>
       <div id="err"></div>
       <label class="field"><span>Username</span><input type="text" name="username" autocomplete="username" autocapitalize="off" required></label>
@@ -571,35 +621,76 @@ function passwordView() {
 
 // Browse ------------------------------------------------------------------------------
 
+// Titles: English or Japanese (romaji), per person (Settings or the EN/JA switch at the top)
+const titleLang = () => status?.user?.title_lang || "en";
+function showTitle(m) {
+  if (!m) return "";
+  return titleLang() === "ja" ? m.romaji || m.title : m.english || m.title || m.romaji;
+}
+
+function posterCard(m, k, { rank = 0 } = {}) {
+  const sub = [m.format?.replace("_", " "), m.year, m.episodes && `${m.episodes} eps`].filter(Boolean).join(" · ");
+  return `<a class="poster rise" style="--i:${k}" href="#/search?q=${encodeURIComponent(m.english || m.romaji || m.title)}" data-card="${m.id}">
+      ${rank ? `<span class="rank" aria-hidden="true">${rank}</span>` : ""}
+      <div class="art" style="background-image:url('${esc(m.cover)}')"><span data-lib></span></div>
+      <div class="name">${esc(showTitle(m))}</div>
+      <div class="sub">${esc(sub)}</div>
+    </a>`;
+}
+
+function markLibrary(el, items) {
+  libraryMatch(items.map((m) => ({ id: m.id, titles: [m.english, m.romaji, m.title] }))).then((matches) => {
+    for (const [id, m] of Object.entries(matches)) {
+      for (const slot of el.querySelectorAll(`[data-card="${id}"] [data-lib]`)) slot.outerHTML = libraryBadge(m);
+    }
+  });
+}
+
 async function browseView() {
   view.innerHTML = `
-    <div class="searchbar"><input type="search" id="q" placeholder="Search anime…" enterkeyhint="search" aria-label="Search anime"></div>
-    <div class="section-head"><h2>Trending now</h2></div>
-    <div id="trending">${loading()}</div>
+    <section class="feature" id="feature"><div class="bg skel"></div></section>
+    <form class="searchbar" id="quick">${icon("search", "lead")}
+      <input type="search" id="q" placeholder="Search anime by English or Japanese name" enterkeyhint="search" aria-label="Search anime"></form>
+    <div class="section-head"><h2>Trending now</h2>
+      <div class="shelf-nav"><button class="small icon" data-shelf="-1" aria-label="Scroll left">${icon("back")}</button><button class="small icon" data-shelf="1" aria-label="Scroll right">${icon("arrow")}</button></div></div>
+    <div class="shelf ranked" id="trending">${skeletonPosters(8)}</div>
     <div class="section-head"><h2>This season</h2></div>
-    <div id="seasonal">${loading()}</div>`;
-  $("#q").addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && e.target.value.trim()) location.hash = `#/search?q=${encodeURIComponent(e.target.value.trim())}`;
+    <div class="posters" id="seasonal">${skeletonPosters(12)}</div>`;
+  $("#quick").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const value = $("#q").value.trim();
+    if (value) location.hash = `#/search?q=${encodeURIComponent(value)}`;
   });
-  for (const kind of ["trending", "seasonal"]) {
-    api(`/api/browse/${kind}`).then(({ items, error }) => {
-      const el = $(`#${kind}`);
-      if (!el) return;
-      if (!items.length) { el.innerHTML = `<p class="muted">${esc(error || "Nothing to show.")}</p>`; return; }
-      el.innerHTML = `<div class="posters">${items.map((m) => `
-        <a class="poster" href="#/search?q=${encodeURIComponent(m.title)}" data-card="${m.id}">
-          <div class="art" style="background-image:url('${esc(m.cover)}')"><span data-lib></span></div>
-          <div class="name">${esc(m.title)}</div>
-          <div class="sub">${esc([m.format?.replace("_", " "), m.year, m.episodes && `${m.episodes} eps`].filter(Boolean).join(" · "))}</div>
-        </a>`).join("")}</div>`;
-      libraryMatch(items.map((m) => ({ id: m.id, titles: [m.title, m.romaji] }))).then((matches) => {
-        for (const [id, m] of Object.entries(matches)) {
-          const slot = el.querySelector(`[data-card="${id}"] [data-lib]`);
-          if (slot) slot.outerHTML = libraryBadge(m);
-        }
-      });
-    }).catch((e) => { const el = $(`#${kind}`); if (el) el.innerHTML = `<p class="muted">${esc(e.message)}</p>`; });
+  for (const b of $$("[data-shelf]")) {
+    b.addEventListener("click", () => { const shelf = $("#trending"); shelf.scrollBy({ left: Number(b.dataset.shelf) * shelf.clientWidth * .8, behavior: "smooth" }); });
   }
+
+  api("/api/browse/trending").then(({ items, error }) => {
+    const shelf = $("#trending"), feature = $("#feature");
+    if (!shelf) return;
+    if (!items.length) { shelf.outerHTML = `<p class="muted">${esc(error || "Nothing to show.")}</p>`; feature.remove(); return; }
+    // The most popular show with wide artwork leads the page
+    const top = items.find((m) => m.banner) || items[0];
+    feature.innerHTML = `
+      <div class="bg" style="background-image:url('${esc(top.banner || top.cover)}')"></div>
+      <div>
+        <span class="eyebrow">${icon("spark")} #${items.indexOf(top) + 1} trending</span>
+        <h1>${esc(showTitle(top))}</h1>
+        <div class="meta">${esc([top.format?.replace("_", " "), top.year, top.episodes && `${top.episodes} episodes`, ...(top.genres || [])].filter(Boolean).join(" · "))}</div>
+        <div class="row"><a class="btn primary" href="#/search?q=${encodeURIComponent(top.english || top.romaji)}">${icon("search")}Find episodes</a><span data-card="${top.id}"><span data-lib></span></span></div>
+      </div>`;
+    shelf.innerHTML = items.slice(0, 10).map((m, k) => posterCard(m, k, { rank: k + 1 })).join("")
+      + items.slice(10).map((m, k) => posterCard(m, k + 10)).join("");
+    markLibrary(view, items);
+  }).catch((e) => { const el = $("#trending"); if (el) el.outerHTML = `<p class="muted">${esc(e.message)}</p>`; });
+
+  api("/api/browse/seasonal").then(({ items, error }) => {
+    const el = $("#seasonal");
+    if (!el) return;
+    if (!items.length) { el.outerHTML = `<p class="muted">${esc(error || "Nothing to show.")}</p>`; return; }
+    el.innerHTML = items.map((m, k) => posterCard(m, k)).join("");
+    markLibrary(el, items);
+  }).catch((e) => { const el = $("#seasonal"); if (el) el.outerHTML = `<p class="muted">${esc(e.message)}</p>`; });
 }
 
 // Search -------------------------------------------------------------------------------
@@ -609,15 +700,15 @@ async function searchView() {
   const mode = wantMode();
   const dub = mode === "dub";  // the episode lists for "both" come from the sub
   view.innerHTML = `
-    <form class="searchbar" id="search">
-      <input type="search" name="q" value="${esc(q)}" placeholder="Search anime…" enterkeyhint="search" aria-label="Search anime" ${q ? "" : "autofocus"}>
+    <form class="searchbar" id="search">${icon("search", "lead")}
+      <input type="search" name="q" value="${esc(q)}" placeholder="English or Japanese name" enterkeyhint="search" aria-label="Search anime" ${q ? "" : "autofocus"}>
       <button class="primary" type="submit">Search</button>
     </form>
     <div class="row" style="margin-bottom:1rem">
       ${modeToggle(mode)}
-      <span class="muted small grow">${can.download() ? "Tick several results to queue them together, e.g. every season." : ""}</span>
+      <span class="muted small" style="flex-basis:100%">${can.download() ? "Tick several results to queue them together, e.g. every season." : ""}</span>
     </div>
-    <div id="results">${q ? loading("Searching…") : ""}</div>`;
+    <div id="results">${q ? `<div class="results">${Array.from({ length: 6 }, (_, k) => `<div class="result rise" style="--i:${k}"><div class="thumb skel" style="height:110px"></div><div class="body"><div class="skel skel-line" style="width:70%"></div><div class="skel skel-line" style="width:40%"></div></div></div>`).join("")}</div>` : ""}</div>`;
   $("#search").addEventListener("submit", (e) => {
     e.preventDefault();
     const value = e.target.q.value.trim();
@@ -628,9 +719,9 @@ async function searchView() {
   }
   if (!q) return;
 
-  let results;
+  let results, alsoSearched = [];
   try {
-    ({ results } = await api(`/api/search?q=${encodeURIComponent(q)}&dub=${dub}`));
+    ({ results, also_searched: alsoSearched = [] } = await api(`/api/search?q=${encodeURIComponent(q)}&dub=${dub}`));
   } catch (e) {
     $("#results").innerHTML = `<div class="error-box">${esc(e.message)}</div>`;
     return;
@@ -638,20 +729,22 @@ async function searchView() {
   if (!results.length) { $("#results").innerHTML = `<p class="muted">No results for “${esc(q)}”.</p>`; return; }
 
   const selected = new Set();
-  $("#results").innerHTML = `<div class="results">${results.map((r) => `
-    <div class="result" data-index="${r.index}">
+  $("#results").innerHTML = (alsoSearched.length ? `<p class="muted small">Also searched for ${alsoSearched.map((x) => `“${esc(x)}”`).join(" and ")}, its other name${alsoSearched.length > 1 ? "s" : ""}.</p>` : "")
+    + `<div class="results">${results.map((r, k) => `
+    <div class="result rise" style="--i:${k}" data-key="${r.key}">
       <div class="thumb" data-title="${esc(r.title)}"></div>
-      <a class="body" href="#/show?q=${encodeURIComponent(q)}&i=${r.index}&t=${encodeURIComponent(r.title)}${modeParam(mode)}">
-        <span class="title">${esc(r.title)}</span>
+      <a class="body" href="#/show?q=${encodeURIComponent(r.query || q)}&i=${r.index}&t=${encodeURIComponent(r.title)}${modeParam(mode)}">
+        <span class="title" data-name>${esc(r.title)}</span>
+        <span class="meta" data-alt></span>
         <span class="meta" data-meta>${r.title_known ? "" : "Only result"}</span>
         <span data-lib></span>
       </a>
-      ${can.download() ? `<label class="pick" aria-label="Select ${esc(r.title)}"><input type="checkbox" value="${r.index}"></label>` : ""}
+      ${can.download() ? `<label class="pick" aria-label="Select ${esc(r.title)}"><input type="checkbox" value="${r.key}"></label>` : ""}
     </div>`).join("")}</div>`;
 
-  libraryMatch(results.map((r) => ({ id: r.index, titles: [r.title] }))).then((matches) => {
-    for (const [index, m] of Object.entries(matches)) {
-      const slot = $(`.result[data-index="${index}"] [data-lib]`);
+  libraryMatch(results.map((r) => ({ id: r.key, titles: [r.title] }))).then((matches) => {
+    for (const [key, m] of Object.entries(matches)) {
+      const slot = $(`.result[data-key="${key}"] [data-lib]`);
       if (slot) slot.outerHTML = libraryBadge(m);
     }
   });
@@ -660,8 +753,15 @@ async function searchView() {
     fetchMeta(thumb.dataset.title).then((m) => {
       if (!m) return;
       thumb.style.backgroundImage = `url('${m.cover}')`;
-      const metaEl = thumb.parentElement.querySelector("[data-meta]");
-      metaEl.textContent = [m.format?.replace("_", " "), m.year, m.episodes && `${m.episodes} eps`, m.score && `${m.score}%`].filter(Boolean).join(" · ");
+      const row = thumb.parentElement;
+      // Show the title in the chosen language, with the other one underneath
+      const site = thumb.dataset.title;
+      const preferred = showTitle(m);
+      const other = titleLang() === "ja" ? (m.english || site) : m.romaji;
+      if (preferred && preferred !== site && titleLang() === "ja") row.querySelector("[data-name]").textContent = preferred;
+      const shown = row.querySelector("[data-name]").textContent;
+      if (other && other.toLowerCase() !== shown.toLowerCase()) row.querySelector("[data-alt]").textContent = other;
+      row.querySelector("[data-meta]").textContent = [m.format?.replace("_", " "), m.year, m.episodes && `${m.episodes} eps`, m.score && `${m.score}%`].filter(Boolean).join(" · ");
     });
   }
 
@@ -674,14 +774,14 @@ async function searchView() {
   const update = () => {
     bar.hidden = selected.size === 0;
     bar.querySelector("#sel-count").textContent = `${selected.size} selected`;
-    for (const el of $$(".result")) el.classList.toggle("selected", selected.has(Number(el.dataset.index)));
+    for (const el of $$(".result")) el.classList.toggle("selected", selected.has(el.dataset.key));
   };
   for (const box of $$(".pick input")) {
-    box.addEventListener("change", () => { box.checked ? selected.add(Number(box.value)) : selected.delete(Number(box.value)); update(); });
+    box.addEventListener("change", () => { box.checked ? selected.add(box.value) : selected.delete(box.value); update(); });
   }
   bar.querySelector("#sel-clear").addEventListener("click", () => { selected.clear(); $$(".pick input").forEach((b) => (b.checked = false)); update(); });
   bar.querySelector("#sel-queue").addEventListener("click", () => {
-    const picked = results.filter((r) => selected.has(r.index)).map((r) => ({ query: q, index: r.index, title: r.title }));
+    const picked = results.filter((r) => selected.has(r.key)).map((r) => ({ query: r.query || q, index: r.index, title: r.title }));
     queueSheet(picked, mode);
   });
 }
@@ -766,7 +866,12 @@ async function showView() {
   const p = params();
   const mode = wantMode();
   const dub = mode === "dub";
-  view.innerHTML = loading("Loading seasons and episodes…");
+  view.innerHTML = `
+    <div class="show-hero"><div class="backdrop skel"></div>
+      <div class="hero"><div class="art skel"></div>
+        <div><div class="skel skel-line" style="height:2rem;width:70%"></div><div class="skel skel-line" style="width:40%"></div>
+          <p class="muted small" style="margin-top:1rem">Finding seasons and episodes… this can take a few seconds.</p></div></div></div>
+    <div class="tabs">${'<div class="tab skel" style="width:120px"></div>'.repeat(3)}</div>`;
   let data, locs, settings;
   try {
     [data, locs, settings] = await Promise.all([
@@ -787,17 +892,21 @@ async function showView() {
   if (active < 0) active = 0;
   let locationId = locs.locations.find((l) => l.is_default)?.id;
 
+  const heading = meta ? showTitle(meta) || data.series_name : data.series_name;
   view.innerHTML = `
-    <a href="#/search?q=${encodeURIComponent(p.q)}${modeParam(mode)}" class="small">← Results</a>
-    <div class="hero" style="margin-top:.75rem">
+    <div class="show-hero">
+      <div class="backdrop ${meta?.banner ? "" : "blur"}" style="background-image:url('${esc(meta?.banner || meta?.cover || "")}')"></div>
+      <a href="#/search?q=${encodeURIComponent(p.q)}${modeParam(mode)}" class="btn small back">${icon("back")}Results</a>
+    <div class="hero">
       <div class="art" style="background-image:url('${esc(meta?.cover || "")}')"></div>
-      <div>
-        <h1>${esc(data.series_name)}</h1>
+      <div class="hero-text">
+        <h1>${esc(heading)}</h1>
         <div class="muted small">${esc([meta?.format?.replace("_", " "), meta?.year, meta?.status?.toLowerCase().replace("_", " "), meta?.score && `${meta.score}%`].filter(Boolean).join(" · "))}</div>
         <div class="genres">${(meta?.genres || []).slice(0, 5).map((g) => `<span class="pill">${esc(g)}</span>`).join("")}</div>
         <div id="inlib"></div>
         ${meta?.description ? `<p class="synopsis clamp" id="syn">${esc(meta.description.replace(/<[^>]+>/g, ""))}</p>` : ""}
       </div>
+    </div>
     </div>
 
     <div class="card">
@@ -812,7 +921,7 @@ async function showView() {
     </div>
 
     <div class="section-head"><h2>Seasons</h2>
-      <div class="row">${can.download() ? `<button class="small" id="follow">☆ Follow</button>` : ""}<button class="small" id="all-seasons">Select all seasons</button></div></div>
+      <div class="row">${can.download() ? `<button class="small" id="follow">${icon("star")}<span>Follow</span></button>` : ""}<button class="small" id="all-seasons">Select all seasons</button></div></div>
     <div class="tabs" id="tabs" role="tablist"></div>
     <div id="season"></div>
     <div class="pad-actionbar"></div>`;
@@ -825,8 +934,8 @@ async function showView() {
     const m = matches.series;
     if (!m || !$("#inlib")) return;
     const { seasons: have, where } = librarySummary(m);
-    $("#inlib").innerHTML = `<div class="libbox">✓ <b>In your library</b>${where ? ` <span class="muted">${esc(where)}</span>` : ""}
-      ${have ? `<div class="small">${esc(have)}</div>` : ""}</div>`;
+    $("#inlib").innerHTML = `<div class="libbox">${icon("check")}<div><b>In your library</b>${where ? ` <span class="muted">${esc(where)}</span>` : ""}
+      ${have ? `<div class="small">${esc(have)}</div>` : ""}</div></div>`;
   });
 
   const bar = document.createElement("div");
@@ -967,7 +1076,7 @@ async function showView() {
     const { follows } = await api("/api/follows").catch(() => ({ follows: [] }));
     const mine = follows.filter((f) => f.mode === mode && seasons.some((x) => x.title === f.title));
     if (mine.length) {
-      followBtn.textContent = "★ Following";
+      followBtn.innerHTML = `${icon("star", "fill")}<span>Following</span>`;
       followBtn.classList.add("following");
       followBtn.dataset.tip = "You follow this show, so new episodes download by themselves. Tap to manage it under Downloads → Following";
       followBtn.onclick = () => { location.hash = "#/downloads?tab=following"; };
@@ -1078,7 +1187,7 @@ async function renderFollowing() {
   const el = $("#queue");
   if (!el) return;
   if (!data.follows.length) {
-    el.innerHTML = `<div class="card muted">You're not following anything yet. Open a show and tap <b>☆ Follow</b> to keep it up to date automatically.</div>`;
+    el.innerHTML = `<div class="card muted">You're not following anything yet. Open a show and tap <b>Follow</b> to keep it up to date automatically.</div>`;
     return;
   }
   el.innerHTML = data.follows.map((f) => {
@@ -1161,8 +1270,8 @@ async function renderQueue() {
         ${mine && /scan failed/.test(b.warning) ? `<div style="margin-top:.5rem"><button class="small" data-b="rescan">Scan now</button></div>` : ""}</div>` : ""}
       ${open ? `
         ${mine ? `<div class="batch-tools">
-          <button class="small" data-b="up" aria-label="Move up">↑</button>
-          <button class="small" data-b="down" aria-label="Move down">↓</button>
+          <button class="small icon" data-b="up" aria-label="Move up">${icon("up")}</button>
+          <button class="small icon" data-b="down" aria-label="Move down">${icon("down")}</button>
           ${b.counts.failed + b.counts.cancelled ? `<button class="small" data-b="retry">Retry failed</button>` : ""}
           ${b.active ? `<button class="small danger" data-b="cancel">Cancel</button>` : `<button class="small" data-b="remove">Remove</button>`}
         </div>` : ""}
@@ -1176,9 +1285,9 @@ async function renderQueue() {
               ${i.error ? `<div class="err">${esc(i.error)}</div>` : ""}
             </div>
             <div class="row" ${mine ? "" : "hidden"}>
-              ${i.status === "queued" ? `<button class="small icon" data-i="up" aria-label="Move up">↑</button><button class="small icon" data-i="down" aria-label="Move down">↓</button>` : ""}
+              ${i.status === "queued" ? `<button class="small icon" data-i="up" aria-label="Move up">${icon("up")}</button><button class="small icon" data-i="down" aria-label="Move down">↓</button>` : ""}
               ${["failed", "cancelled"].includes(i.status) ? `<button class="small" data-i="retry">Retry</button>` : ""}
-              ${["queued", "running"].includes(i.status) ? `<button class="small icon danger" data-i="cancel" aria-label="Cancel">✕</button>` : ""}
+              ${["queued", "running"].includes(i.status) ? `<button class="small icon danger" data-i="cancel" aria-label="Cancel">${icon("x")}</button>` : ""}
             </div>
           </div>`).join("")}</div>` : ""}
     </div>`;
@@ -1314,9 +1423,9 @@ function bindLocationForm(form, onSaved, onCancel) {
     if (!input.value.trim()) out.textContent = "";
     else if (!p) out.innerHTML = `<span style="color:var(--warn)">Start with //server/share (SMB) or server:/path (NFS).</span>`;
     else if (p.type === "smb") out.innerHTML = p.share
-      ? `<div class="chosen">✓ Saving to <b>${esc(p.share)}</b>${p.subpath ? ` › <b>${esc(p.subpath.split("/").join(" › "))}</b>` : ""} <span class="muted">on ${esc(p.server)}</span></div>`
+      ? `<div class="chosen">${icon("check")}<span>Saving to <b>${esc(p.share)}</b>${p.subpath ? ` › <b>${esc(p.subpath.split("/").join(" › "))}</b>` : ""} <span class="muted">on ${esc(p.server)}</span></span></div>`
       : `Server <b>${esc(p.server)}</b>. Add the share name.`;
-    else out.innerHTML = `✓ NFS server <b>${esc(p.server)}</b> · path <b>${esc(p.export)}</b>`;
+    else out.innerHTML = `<div class="chosen">${icon("check")}<span>NFS server <b>${esc(p.server)}</b> · path <b>${esc(p.export)}</b></span></div>`;
     if (p?.share || p?.export) form.name.placeholder = autoName(p) || "Filled in from the folder";
     // An NFS address typed into the SMB box (or the reverse) moves to the right type
     if (p && !form.dataset.id && p.type !== form.type.value) {
@@ -1346,7 +1455,7 @@ function bindLocationForm(form, onSaved, onCancel) {
     const others = smb.suggestions.filter((s) => s.share !== share || s.path.join("/") !== path.join("/"));
     browser.innerHTML = `
       ${others.length ? `<div class="hint" style="margin-top:.5rem">Other matches:</div>${others.map((s, k) =>
-        `<button type="button" class="pickrow" data-sugg="${k}">📁 ${esc([s.share, ...s.path].join(" › "))}</button>`).join("")}` : ""}
+        `<button type="button" class="pickrow" data-sugg="${k}">${icon("folder")}${esc([s.share, ...s.path].join(" › "))}</button>`).join("")}` : ""}
       <button type="button" class="small ghost" data-change>Pick a different folder</button>`;
     for (const b of $$("[data-sugg]", browser)) b.onclick = () => { const s = others[Number(b.dataset.sugg)]; choose(s.share, s.path); };
     $("[data-change]", browser).onclick = () => openFolder(share, path.slice(0, -1));
@@ -1354,9 +1463,9 @@ function bindLocationForm(form, onSaved, onCancel) {
   const renderShares = () => {
     browser.innerHTML = `
       ${smb.suggestions.length ? `<div class="hint" style="margin-top:.5rem">Anime folders found:</div>${smb.suggestions.map((s, k) =>
-        `<button type="button" class="pickrow" data-sugg="${k}">📁 ${esc([s.share, ...s.path].join(" › "))}</button>`).join("")}` : ""}
+        `<button type="button" class="pickrow" data-sugg="${k}">${icon("folder")}${esc([s.share, ...s.path].join(" › "))}</button>`).join("")}` : ""}
       <div class="hint" style="margin-top:.5rem">${smb.suggestions.length ? "Or browse a share:" : "No folder called anime was found. Pick a share to browse:"}</div>
-      ${smb.shares.map((sh, k) => `<button type="button" class="pickrow" data-share="${k}">🗄️ ${esc(sh.name)}${sh.comment ? ` <span class="muted">· ${esc(sh.comment)}</span>` : ""}</button>`).join("")}`;
+      ${smb.shares.map((sh, k) => `<button type="button" class="pickrow" data-share="${k}">${icon("drive")}${esc(sh.name)}${sh.comment ? ` <span class="muted">· ${esc(sh.comment)}</span>` : ""}</button>`).join("")}`;
     for (const b of $$("[data-sugg]", browser)) b.onclick = () => { const s = smb.suggestions[Number(b.dataset.sugg)]; choose(s.share, s.path); };
     for (const b of $$("[data-share]", browser)) b.onclick = () => openFolder(smb.shares[Number(b.dataset.share)].name, []);
   };
@@ -1373,7 +1482,7 @@ function bindLocationForm(form, onSaved, onCancel) {
     const crumbs = [["All shares", -2], [share, -1], ...path.map((p, k) => [p, k])];
     browser.innerHTML = `
       <div class="crumbs">${crumbs.map(([label, k]) => `<button type="button" class="ghost small" data-crumb="${k}">${esc(label)}</button>`).join("<span>›</span>")}</div>
-      ${folders.map((f) => `<button type="button" class="pickrow" data-open="${esc(f)}">📁 ${esc(f)}</button>`).join("") || `<div class="hint">No folders here.</div>`}
+      ${folders.map((f) => `<button type="button" class="pickrow" data-open="${esc(f)}">${icon("folder")}${esc(f)}</button>`).join("") || `<div class="hint">No folders here.</div>`}
       <div class="row" style="margin-top:.5rem">
         <button type="button" class="primary small" data-use>Use ${esc(path.length ? path[path.length - 1] : share)}</button>
         <input type="text" class="grow" data-newname placeholder="or a new folder, e.g. anime" style="min-height:36px">
@@ -1659,6 +1768,12 @@ function accountCard() {
       <div id="sessions" class="muted small">${loading()}</div>
       <div class="row" style="margin-top:.75rem"><button type="button" id="logout" class="ghost">Log out</button>
         <button type="button" id="logout-all" class="danger small">Log out on all devices</button></div>
+      <h3 style="margin-top:1rem">Show titles in</h3>
+      <div class="segmented" role="group" aria-label="Title language">
+        <button type="button" data-setlang="en" class="${titleLang() === "en" ? "on" : ""}">English</button>
+        <button type="button" data-setlang="ja" class="${titleLang() === "ja" ? "on" : ""}">Japanese (romaji)</button>
+      </div>
+      <p class="hint">Search finds shows by either name, whichever you pick.</p>
       <h3 style="margin-top:1rem">Help</h3>
       <div class="row"><button type="button" class="small" id="replay-tour">Show the tour again</button>
         <button type="button" class="small" id="show-changes">What's new</button></div>
@@ -1666,6 +1781,7 @@ function accountCard() {
 }
 
 function bindAccountCard() {
+  for (const b of $$("[data-setlang]")) b.addEventListener("click", () => setTitleLang(b.dataset.setlang));
   $("#replay-tour").addEventListener("click", () => { location.hash = "#/"; setTimeout(startTour, 300); });
   $("#show-changes").addEventListener("click", () => showWhatsNew({ all: true }));
   $("#pw").addEventListener("submit", async (e) => {
@@ -1915,11 +2031,11 @@ async function refreshUpdateBanner() {
   if (!info.update_available || info.auto_update || dismissed === info.latest) { banner.hidden = true; return; }
   banner.hidden = false;
   banner.innerHTML = `<div class="banner-inner">
-    <span class="grow">⬆️ <b>AniStash ${esc(info.latest)} is available</b> <span class="muted">(you have v${esc(info.current)})</span></span>
+    <span class="grow">${icon("spark", "lead")} <b>AniStash ${esc(info.latest)} is available</b> <span class="muted">(you have v${esc(info.current)})</span></span>
     <a class="small" href="https://github.com/JustinMarxGit/anistash/releases/tag/${encodeURIComponent(info.latest)}" target="_blank" rel="noopener"
        data-tip="Read what this update changes (opens GitHub)">What's new</a>
     ${info.can_update ? `<button class="primary small" id="banner-update" data-tip="Install the update now. Your settings, users and downloads stay">Update now</button>` : ""}
-    <button class="ghost small icon" id="banner-close" aria-label="Hide until next visit" data-tip="Hide this until you next open AniStash">✕</button>
+    <button class="ghost small icon" id="banner-close" aria-label="Hide until next visit" data-tip="Hide this until you next open AniStash">${icon("x")}</button>
   </div>`;
   $("#banner-update", banner)?.addEventListener("click", (e) => runUpdate(info.latest, e.currentTarget));
   $("#banner-close", banner).addEventListener("click", () => {
@@ -1952,7 +2068,7 @@ async function setupView() {
         <h1>${title}</h1>
         ${body}
         <div class="wizard-nav">
-          ${back && step > 0 ? `<button type="button" id="back" class="ghost">← Back</button>` : "<span></span>"}
+          ${back && step > 0 ? `<button type="button" id="back" class="ghost">${icon("back")}Back</button>` : "<span></span>"}
           <div class="row">${skip ? `<button type="button" id="skip" class="ghost">Skip</button>` : ""}<button type="button" class="primary" id="${nextId}">${next}</button></div>
         </div>
       </div>
@@ -1971,7 +2087,7 @@ async function setupView() {
       bindBack();
       $("#next").addEventListener("click", () => go(1));
       const sys = await api("/api/setup/system").catch((e) => ({ error: e.message }));
-      const line = (name, value, ok) => `<div><span>${ok ? "✅" : "⚠️"} ${name}</span><span>${esc(value)}</span></div>`;
+      const line = (name, value, ok) => `<div><span>${ok ? icon("check", "okc") : icon("alert", "warnc")}${name}</span><span>${esc(value)}</span></div>`;
       if (!$("#checks")) return;
       $("#checks").innerHTML = sys.error ? `<div class="error-box">${esc(sys.error)}</div>` : `
         <div class="checks">

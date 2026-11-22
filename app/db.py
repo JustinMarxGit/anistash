@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at           INTEGER NOT NULL DEFAULT 0,
     last_login_at        INTEGER NOT NULL DEFAULT 0,
     last_seen_version    TEXT NOT NULL DEFAULT '',   -- newest "What's new" this user has seen
-    tour_done            INTEGER NOT NULL DEFAULT 0
+    tour_done            INTEGER NOT NULL DEFAULT 0,
+    title_lang           TEXT NOT NULL DEFAULT 'en'  -- 'en' English titles, 'ja' Japanese (romaji)
 );
 
 -- Only a SHA-256 of each session token is stored, so a copy of the database can't log anyone in
@@ -187,6 +188,7 @@ MIGRATIONS = [
     ("batches", "follow_id", "INTEGER REFERENCES follows(id) ON DELETE SET NULL"),
     ("users", "last_seen_version", "TEXT NOT NULL DEFAULT ''"),
     ("batches", "scanned_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("users", "title_lang", "TEXT NOT NULL DEFAULT 'en'"),
     ("batches", "scanned_with", "TEXT NOT NULL DEFAULT ''"),
     # People who used AniStash before the tour existed don't need it pushed on them
     ("users", "tour_done", "INTEGER NOT NULL DEFAULT 1"),

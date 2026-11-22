@@ -5,6 +5,16 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "0.7.0",
+        "title": "A fresh new look",
+        "items": [
+            "AniStash has a new design: a seal logo, a featured show at the top of Browse, a trending top 10, "
+            "show pages with big banner art, and smooth animations throughout.",
+            "Switch titles between English and Japanese with EN / JA at the top of the page.",
+            "Search finds a show by its English or Japanese name, whichever you type.",
+        ],
+    },
+    {
         "version": "0.6.0",
         "title": "Automatic updates, What's new and a guided tour",
         "items": [

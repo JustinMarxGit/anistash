@@ -6,7 +6,7 @@ AniStash runs in its own Proxmox LXC, created with one command on the Proxmox ho
 
 ## Features
 
-- **Browse and search**: trending and seasonal anime (posters and synopses from AniList), and ani-cli search with sub/dub.
+- **Browse and search**: a featured show, the trending top 10 and this season's anime (artwork from AniList). Search finds a show by its **English or Japanese name**, and an **EN / JA** switch shows every title in the language you prefer.
 - **Seasons**: a show's seasons are grouped automatically, including "Season 3 Part 2" and "Final Season". Queue every season at once, one season, or specific episodes (`1-5, 8, 12-`).
 - **Sub, dub, or both**: download either, or **Sub + Dub** to get one file with both Japanese and English audio (labelled), so you can switch language in Jellyfin or Plex's audio menu. You choose which plays first.
 - **Already in your library**: posters, search results and show pages show **✓ In library**, with seasons and episode counts. This covers your download folders and your Jellyfin/Plex anime library.

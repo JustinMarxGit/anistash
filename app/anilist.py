@@ -14,7 +14,8 @@ from .naming import base_title, normalize
 
 URL = "https://graphql.anilist.co"
 
-_CARD = "id title { romaji english } coverImage { large } format episodes seasonYear averageScore"
+_CARD = ("id title { romaji english } coverImage { large extraLarge } bannerImage format episodes seasonYear "
+         "averageScore genres")
 
 _LOOKUP = """
 query ($search: String) {
@@ -69,8 +70,11 @@ def _card(media: dict) -> dict:
     return {
         "id": media["id"],
         "title": media["title"].get("english") or media["title"]["romaji"],
+        "english": media["title"].get("english") or "",
         "romaji": media["title"]["romaji"],
         "cover": (media.get("coverImage") or {}).get("large"),
+        "banner": media.get("bannerImage"),
+        "genres": (media.get("genres") or [])[:3],
         "format": media.get("format"),
         "episodes": media.get("episodes"),
         "year": media.get("seasonYear"),
@@ -79,7 +83,7 @@ def _card(media: dict) -> dict:
 
 
 async def trending() -> list[dict]:
-    data = await _gql(_LIST, {"sort": ["TRENDING_DESC"]}, "anilist:trending", 3600)
+    data = await _gql(_LIST, {"sort": ["TRENDING_DESC"]}, "anilist:trending:v2", 3600)
     return [_card(m) for m in (data or {}).get("Page", {}).get("media", [])]
 
 
@@ -87,7 +91,7 @@ async def seasonal() -> list[dict]:
     today = datetime.date.today()
     season = ["WINTER", "SPRING", "SUMMER", "FALL"][(today.month - 1) // 3]
     data = await _gql(_LIST, {"sort": ["POPULARITY_DESC"], "season": season, "year": today.year},
-                      f"anilist:seasonal:{season}:{today.year}", 3600)
+                      f"anilist:seasonal2:{season}:{today.year}", 3600)
     return [_card(m) for m in (data or {}).get("Page", {}).get("media", [])]
 
 
@@ -199,3 +203,19 @@ async def airing(media_id_: int) -> dict:
         "next_episode": upcoming.get("episode"),
         "next_airing_at": upcoming.get("airingAt"),
     }
+
+
+async def other_names(query: str) -> list[str]:
+    """The show's English and Japanese (romaji) titles when `query` is one of its names, so
+    a search works whichever language it was typed in. Empty when AniList has no good match."""
+    media = await _best_match(query)
+    if not media:
+        return []
+    titles = media.get("title") or {}
+    names = [t for t in (titles.get("english"), titles.get("romaji")) if t]
+    wanted = normalize(query)
+    known = {normalize(n) for n in _names(media)}
+    # Only trust the match when the query is (part of) one of the show's names
+    if wanted not in known and not any(wanted and wanted in k for k in known):
+        return []
+    return [n for n in names if normalize(n) != wanted]
