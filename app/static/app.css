@@ -361,6 +361,13 @@ input::placeholder { color: var(--muted); opacity: .8; }
 /* Genres, Discover and anime pages */
 .chips-row { display: flex; gap: .45rem; overflow-x: auto; scrollbar-width: none; margin: 0 -16px 1.6rem; padding: 2px 16px 4px; }
 .chips-row::-webkit-scrollbar { display: none; }
+.chips-row:not(.wrap) { scroll-behavior: smooth; --fade-l: 0px; --fade-r: 0px;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent);
+          mask-image: linear-gradient(90deg, transparent, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent); }
+.chips-row.more-before { --fade-l: 48px; }
+.chips-row.more-after { --fade-r: 48px; }
+.shelf-nav.always { display: flex; }
+.shelf-nav button:disabled { opacity: .35; cursor: default; }
 .chips-row.wrap { flex-wrap: wrap; overflow: visible; margin: 0 0 1rem; padding: 0; }
 .chip { flex: none; display: inline-flex; align-items: center; min-height: 36px; padding: .35rem .85rem; border-radius: 99px;
   border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); font-size: .86rem; font-weight: 600;

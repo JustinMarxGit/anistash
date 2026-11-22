@@ -5,6 +5,12 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "0.10.1",
+        "title": "Scroll through genres",
+        "items": ["The genre row on Browse has arrows to scroll through every genre, and fades at the edge that has "
+                  "more to see."],
+    },
+    {
         "version": "0.10.0",
         "title": "Discover anime",
         "items": [

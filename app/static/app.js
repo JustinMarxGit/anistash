@@ -802,7 +802,8 @@ async function browseView() {
     <form class="searchbar" id="quick">${icon("search", "lead")}
       <input type="search" id="q" placeholder="Search anime by English or Japanese name" enterkeyhint="search" aria-label="Search anime"></form>
     <div class="section-head"><h2>Browse by genre</h2>
-      <button class="small" id="surprise">${icon("dice")}<span>Surprise me</span></button></div>
+      <div class="row"><button class="small" id="surprise">${icon("dice")}<span>Surprise me</span></button>
+        ${shelfNav("genre-row").replace('class="shelf-nav"', 'class="shelf-nav always"')}</div></div>
     <div class="chips-row" id="genre-row">${'<span class="chip skel" style="width:84px">&nbsp;</span>'.repeat(8)}</div>
     <div class="section-head"><h2>Best this season</h2>${shelfNav("best")}</div>
     <p class="hint shelf-hint" id="best-sources"></p>
@@ -825,7 +826,9 @@ async function browseView() {
   $("#surprise").addEventListener("click", (e) => surprise(e.currentTarget));
   genreList().then((genres) => {
     const row = $("#genre-row");
-    if (row) row.innerHTML = genres.map((g) => genreChip(g)).join("");
+    if (!row) return;
+    row.innerHTML = genres.map((g) => genreChip(g)).join("");
+    scrollHints(row);
   });
 
   const seq = routeSeq;
@@ -904,6 +907,21 @@ function browseList(path) {
   browseCache.set(path, { at: Date.now(), promise });
   promise.then((d) => { if (!d.items.length) browseCache.delete(path); }, () => browseCache.delete(path));
   return promise;
+}
+
+// A sideways row shows a fade (and enables its arrows) only on the side that has more to see
+function scrollHints(row) {
+  const buttons = $$(`[data-for="${row.id}"]`);
+  const update = () => {
+    const start = row.scrollLeft > 4;
+    const end = row.scrollLeft + row.clientWidth < row.scrollWidth - 4;
+    row.classList.toggle("more-before", start);
+    row.classList.toggle("more-after", end);
+    for (const b of buttons) b.disabled = b.dataset.shelf === "-1" ? !start : !end;
+  };
+  row.addEventListener("scroll", update, { passive: true });
+  window.addEventListener("resize", update);
+  update();
 }
 
 const SOURCE_LABEL = { anilist: "AniList", mal: "MyAnimeList", kitsu: "Kitsu", hianime: "hianime" };
