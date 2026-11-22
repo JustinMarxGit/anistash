@@ -347,3 +347,33 @@ def test_share_box_path_is_split_into_share_and_folder():
 def test_address_type_mismatch_is_explained():
     with pytest.raises(locations.LocationError, match="NFS"):
         locations._clean({"name": "x", "type": "smb", "address": "10.10.1.3:/mnt/anime"})
+
+
+def _helper_module():
+    import importlib.machinery
+    import importlib.util
+    from pathlib import Path
+    path = str(Path(__file__).parent.parent / "helper" / "anidl-helper")
+    loader = importlib.machinery.SourceFileLoader("anidl_helper", path)
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader("anidl_helper", loader))
+    loader.exec_module(module)
+    return module
+
+
+def test_share_address_with_encoded_space():
+    assert locations.parse_address("//10.10.1.3/Data%20Store/jellyfin/anime") == {
+        "type": "smb", "server": "10.10.1.3", "share": "Data Store", "subpath": "jellyfin/anime"}
+
+
+@pytest.mark.parametrize("name", ["Data Store", "media", "anime$", "Café-Media_2", "My.Share (old)"])
+def test_helper_accepts_real_share_names(name):
+    assert _helper_module().check_share(name) == name
+
+
+@pytest.mark.parametrize("name, shown", [("data/store", "/"), ("a:b", ":"), ("x*?", "* ?"), ("", None)])
+def test_helper_rejects_names_smb_forbids(name, shown):
+    helper = _helper_module()
+    with pytest.raises(helper.Invalid) as err:
+        helper.check_share(name)
+    if shown:
+        assert all(c in str(err.value) for c in shown.split())

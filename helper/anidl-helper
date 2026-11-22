@@ -30,11 +30,13 @@ APP_USER = "anidl"
 LOCAL_PATH_PREFIXES = ("/mnt/", "/media/", "/srv/", "/data/", "/downloads/", "/storage/", "/home/")
 
 SERVER = re.compile(r"^[A-Za-z0-9.\-]{1,253}$|^\[?[0-9A-Fa-f:]{2,45}\]?$")
-SMB_PART = re.compile(r"^[A-Za-z0-9_.$\-]{1,200}$")
+# Characters Windows/Samba never allow in a share name; anything else (spaces too) is fine
+SMB_SHARE_BAD = re.compile(r'["/\\\[\]:|<>+=;,?*\x00-\x1f]')
 NFS_EXPORT = re.compile(r"^/[A-Za-z0-9_.\-/]{0,400}$")
 NFS_OPTIONS = re.compile(r"^[A-Za-z0-9_=.,:\-]{0,200}$")
-USERNAME = re.compile(r"^[A-Za-z0-9_.@\-]{0,100}$")
-DOMAIN = re.compile(r"^[A-Za-z0-9_.\-]{0,100}$")
+# Written to a line-based credentials file, so only line breaks and NUL are a problem
+USERNAME = re.compile(r"^[^\r\n\x00]{0,256}$")
+DOMAIN = re.compile(r"^[^\r\n\x00]{0,256}$")
 SMB_VERSIONS = {"", "default", "3.1.1", "3.0", "2.1", "2.0", "1.0"}
 
 
@@ -50,6 +52,18 @@ def done(**data):
 def fail(message):
     print(json.dumps({"ok": False, "error": message}))
     sys.exit(1)
+
+
+def check_share(value):
+    if not isinstance(value, str) or not value.strip():
+        raise Invalid("Enter the share name")
+    value = value.strip()
+    bad = sorted(set(SMB_SHARE_BAD.findall(value)))
+    if bad or len(value) > 80:
+        shown = " ".join(repr(c)[1:-1] for c in bad)
+        raise Invalid(f'Share name "{value}" can\'t contain {shown or "more than 80 characters"}. '
+                      'Enter only the share\'s name here, e.g. "media"')
+    return value
 
 
 def check(pattern, value, name):
@@ -87,7 +101,7 @@ def mount(spec):
 
     if kind == "smb":
         server = check(SERVER, spec.get("server", ""), "Server")
-        share = check(SMB_PART, spec.get("share", ""), "Share name")
+        share = check_share(spec.get("share", ""))
         # Only the share is mounted; anidl creates and uses folders inside it itself
         what = f"//{server}/{share}"
         vers = spec.get("vers", "")
@@ -135,7 +149,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Mount]
-What={what}
+What={what.replace("%", "%%")}
 Where={where}
 Type={fstype}
 Options={",".join(options)}

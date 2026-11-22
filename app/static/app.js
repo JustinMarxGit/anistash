@@ -688,8 +688,9 @@ function locationAddress(type, c) {
 function parseAddress(text) {
   const t = text.trim();
   let m = t.match(/^(?:smb|cifs):\/\/([^/\\]+)[/\\]?(.*)$/i) || t.match(/^(?:\\\\|\/\/)([^/\\]+)[/\\]?(.*)$/);
+  const decode = (part) => { try { return decodeURIComponent(part).trim(); } catch { return part.trim(); } };
   if (m) {
-    const parts = m[2].split(/[/\\]+/).filter(Boolean);
+    const parts = m[2].split(/[/\\]+/).map(decode).filter(Boolean);
     return { type: "smb", server: m[1], share: parts[0] || "", subpath: parts.slice(1).join("/") };
   }
   m = t.match(/^nfs:\/\/([^/]+)(\/.*)?$/i) || t.match(/^([A-Za-z0-9.-]+):(\/.*)$/);

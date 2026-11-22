@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import re
+from urllib.parse import unquote
 import shutil
 import uuid
 
@@ -99,7 +100,9 @@ _NFS = re.compile(r"^([A-Za-z0-9.\-]+):(/.*)$")
 
 
 def _split_path(text: str) -> list[str]:
-    parts = [p for p in re.split(r"[/\\]+", text.strip()) if p]
+    # Addresses copied from a browser or file manager encode spaces as %20
+    parts = [unquote(p).strip() for p in re.split(r"[/\\]+", text.strip())]
+    parts = [p for p in parts if p]
     if any(p in (".", "..") for p in parts):
         raise LocationError("Folder names can't be . or ..")
     return parts
