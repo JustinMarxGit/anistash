@@ -108,6 +108,8 @@ class Gate:
         api = path.startswith("/api/")
         request.state.user = auth.session_user(request.cookies.get(auth.COOKIE)) if api else None
         extra = dict(SECURITY_HEADERS)
+        # Open pages compare this with the version they were loaded with, and reload after an update
+        extra["X-AniStash-Version"] = config.VERSION
         if api:
             extra["Cache-Control"] = "no-store"
         elif path.startswith("/static/"):
@@ -433,9 +435,16 @@ async def update_app(request: Request, user=ADMIN):
 
 
 @app.get("/api/system/update-status")
-async def update_status(user=ADMIN):
-    """For the "update available" banner: admins only, cheap (the release lookup is cached)."""
-    return {**await updates.info(), "can_update": config.helper_available()}
+async def update_status(fresh: bool = False, user=ADMIN):
+    """For the "update available" banner: admins only, cheap (the release lookup is cached;
+    fresh=1 asks GitHub now)."""
+    return {**await updates.info(fresh), "can_update": config.helper_available()}
+
+
+@app.get("/api/system/update-progress")
+async def update_progress(user=ADMIN):
+    """Where a running update is (download, install, restart) and how the last one ended."""
+    return updates.progress()
 
 
 @app.post("/api/system/update-tools")
@@ -757,6 +766,7 @@ def _index_html() -> bytes:
     html = (config.APP_DIR / "static" / "index.html").read_text()
     for asset in ("/static/app.css", "/static/app.js"):
         html = html.replace(f'"{asset}"', f'"{asset}?v={config.VERSION}"')
+    html = html.replace("<title>", f'<meta name="anistash-version" content="{config.VERSION}">\n  <title>', 1)
     return html.encode()
 
 

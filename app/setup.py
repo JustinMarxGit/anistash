@@ -43,11 +43,12 @@ def save_step(step: int) -> None:
         db.set_settings(setup_step=step)
 
 
-async def latest_release() -> str:
-    """Newest release tag on GitHub, cached for 6 hours (the API allows 60 calls/hour)."""
+async def latest_release(fresh: bool = False) -> str:
+    """Newest release tag on GitHub, cached for 6 hours (the API allows 60 calls/hour).
+    fresh: ask GitHub now (the "Check for updates" button)."""
     now = int(time.time())
     row = db.query_one("SELECT value FROM cache WHERE key = 'github:latest' AND expires_at > ?", (now,))
-    if row:
+    if row and not fresh:
         return json.loads(row["value"])
     try:
         resp = await net.client("github", timeout=10).get(f"https://api.github.com/repos/{config.REPO}/releases/latest",

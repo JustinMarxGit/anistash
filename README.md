@@ -114,7 +114,12 @@ For access from outside your home network, put AniStash behind a reverse proxy w
 ## Updates
 
 - **Automatic** (Settings → System, or the setup wizard / `anistash-setup`): AniStash checks GitHub for a new release every 30 minutes. It installs it only while nothing is downloading. If the new version doesn't start, the previous one is put back, and that version isn't retried for 12 hours.
-- **Manual**: admins see a banner at the top of the page when a new version is out, with *Update now*. You can also run `anistash-update` in the container.
+- **From the web UI**: admins get *Update now* in the banner that appears when a new version is out, and *Update AniStash* under Settings → System. *Check for updates* there asks GitHub straight away instead of waiting for the next check.
+  - Either button runs `anistash-update` and shows each step as it happens: download, install, restart.
+  - When the new version is up, the page reloads by itself.
+  - If the update fails, the window says why; the previous version has already been put back.
+- **Every open page follows along**: other tabs, phones and other people's sessions notice the new version on their next refresh and reload too. This includes automatic updates. A page waits if you're halfway through filling in a window.
+- **In the container**: run `anistash-update`.
 - Only **admins** can see or start updates; the server refuses anyone else.
 - Each person sees a short **What's new** the first time they open AniStash after an update.
 

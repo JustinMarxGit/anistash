@@ -29,6 +29,8 @@ async function api(path, { method = "GET", body } = {}) {
     body: body !== undefined ? JSON.stringify(body) : undefined,
     credentials: "same-origin",
   });
+  const serverVersion = resp.headers.get("X-AniStash-Version");
+  if (serverVersion && PAGE_VERSION && serverVersion !== PAGE_VERSION) serverUpdated(serverVersion);
   let data = null;
   try { data = await resp.json(); } catch { /* empty body */ }
   if (resp.status === 401 && !path.startsWith("/api/login")) { location.hash = "#/login"; throw new ApiError("Please log in.", 401); }
@@ -40,6 +42,24 @@ async function api(path, { method = "GET", body } = {}) {
     throw new ApiError(detail || `Request failed (${resp.status})`, resp.status);
   }
   return data;
+}
+
+// The version this page was loaded with. When the server answers with a newer one (after an
+// update, from this page, another device or an automatic update) the page reloads itself, so
+// everyone runs the new version and sees what changed.
+const PAGE_VERSION = document.querySelector('meta[name="anistash-version"]')?.content || "";
+let reloading = false;
+function serverUpdated(version) {
+  if (reloading) return;
+  reloading = true;
+  if (updateSheet) return updateSheet.finished(version);  // the update window says it itself
+  const reload = () => {
+    // Don't throw away a half-filled form: wait until its window is closed
+    if (document.querySelector(".sheet-backdrop")) return void setTimeout(reload, 1500);
+    toast(`AniStash was updated to v${version}. Reloading…`);
+    setTimeout(() => location.reload(), 1500);
+  };
+  reload();
 }
 
 function toast(message, bad = false) {
@@ -195,11 +215,11 @@ function lazyImages(container, root = null) {
   els.forEach((el) => io.observe(el));
 }
 
-function sheet(html) {
+function sheet(html, { dismissable = true } = {}) {
   const backdrop = document.createElement("div");
   backdrop.className = "sheet-backdrop";
   backdrop.innerHTML = `<div class="sheet" role="dialog" aria-modal="true">${html}</div>`;
-  backdrop.addEventListener("click", (e) => { if (e.target === backdrop) backdrop.remove(); });
+  if (dismissable) backdrop.addEventListener("click", (e) => { if (e.target === backdrop) backdrop.remove(); });
   document.body.append(backdrop);
   return backdrop;
 }
@@ -303,6 +323,7 @@ const TIPS = [
   ['#ms-test', "Check the address and key work, and load your libraries"],
   ['#update-tools', "Get the newest ani-cli and yt-dlp. This fixes most search and download problems"],
   ['#update-app', "Install the newest AniStash. Your settings, users and downloads stay"],
+  ['#check-updates', "Ask GitHub now whether a newer AniStash is out (normally checked every few hours)"],
   ['#auto-update', "Install new AniStash versions by themselves, while nothing is downloading"],
   ['#logout', "Sign out on this device"],
   ['#logout-all', "Sign out on every device, for example if you lost a phone"],
@@ -2077,6 +2098,7 @@ async function settingsView() {
       ${sys.update_available ? `<div class="ok-box">AniStash ${esc(sys.latest)} is available.
         <div class="row" style="margin-top:.5rem"><button class="primary small" id="update-app" ${sys.helper ? "" : "disabled"}>Update AniStash</button>
         <a class="small" href="https://github.com/JustinMarxGit/anistash/releases" target="_blank" rel="noopener">What's new</a></div></div>` : ""}
+      ${sys.update_available ? "" : `<div class="row" style="margin:.75rem 0"><button class="small" id="check-updates">Check for updates</button></div>`}
       <p class="muted small">If searches or downloads start failing, the anime site probably changed. Updating ani-cli usually fixes it. Tools also update weekly on their own.</p>
       <label class="check"><input type="checkbox" id="auto-update" ${s.auto_update ? "checked" : ""} ${sys.helper ? "" : "disabled"}>
         Install AniStash updates automatically</label>
@@ -2115,7 +2137,16 @@ async function settingsView() {
       toast("Update finished");
     } catch (err) { toast(err.message, true); }
   });
-  $("#update-app")?.addEventListener("click", (e) => runUpdate(sys.latest, e.currentTarget));
+  $("#update-app")?.addEventListener("click", (e) => runUpdate(sys.latest));
+  $("#check-updates")?.addEventListener("click", async (e) => {
+    try {
+      const info = await busy(e.currentTarget, () => api("/api/system/update-status?fresh=1"));
+      if (!info.update_available) return toast(`You're up to date (v${info.current})`);
+      toast(`AniStash ${info.latest} is available`);
+      route.bannerChecked = false;
+      route();  // shows the Update button
+    } catch (err) { toast(err.message, true); }
+  });
   $("#auto-update").addEventListener("change", async (e) => {
     try {
       prefs = await api("/api/settings", { method: "PUT", body: { auto_update: e.target.checked } });
@@ -2127,21 +2158,77 @@ async function settingsView() {
 
 // Updates (admins only) ---------------------------------------------------------------------------
 
-async function runUpdate(latest, button) {
-  if (!confirm(`Update AniStash to ${latest}? It takes a minute or two and this page reloads when it's done. Running downloads restart.`)) return;
+// The update window: shows each step of anistash-update as it happens, then reloads the page
+// into the new version (or says why it didn't work; a failed update puts the old version back)
+let updateSheet = null;
+const UPDATE_STEPS = [
+  ["start", "Starting the update"],
+  ["download", "Downloading the new version"],
+  ["install", "Installing"],
+  ["restart", "Restarting AniStash"],
+];
+
+async function runUpdate(latest) {
+  if (!confirm(`Update AniStash to ${latest}? It takes a minute or two. Downloads in progress restart afterwards.`)) return;
+  const backdrop = sheet(`<h2>Updating to ${esc(latest)}</h2>
+    <div class="checks" id="upd-steps">${UPDATE_STEPS.map(([key, label]) =>
+      `<div data-step="${key}"><span>${label}</span><span class="pill" data-state>Waiting</span></div>`).join("")}</div>
+    <p class="muted small" id="upd-note" style="margin-top:1rem">You can keep this open; the page reloads by itself when the new version is running.</p>
+    <div class="row end" id="upd-actions" hidden><button class="primary" data-close>Close</button></div>`, { dismissable: false });
+  const box = backdrop.querySelector(".sheet");
+  const started = Date.now();
+  let timer = null;
+  const stop = () => { clearInterval(timer); updateSheet = null; };
+  let current = "start";
+  const show = (stepKey, failed = false) => {
+    if (stepKey !== "done") current = stepKey;
+    const at = UPDATE_STEPS.findIndex(([key]) => key === stepKey);
+    UPDATE_STEPS.forEach(([key], i) => {
+      const pill = box.querySelector(`[data-step="${key}"] [data-state]`);
+      const [text, cls] = i < at || stepKey === "done" ? ["Done", "ok"] : i === at ? (failed ? ["Failed", "bad"] : ["Working…", "accent"]) : ["Waiting", ""];
+      pill.textContent = text;
+      pill.className = `pill ${cls}`;
+    });
+  };
+  const end = (message, bad) => {
+    stop();
+    box.querySelector("#upd-note").innerHTML = message;
+    box.querySelector("#upd-note").className = bad ? "warn-box" : "ok-box";
+    box.querySelector("#upd-actions").hidden = false;
+    box.querySelector("[data-close]").onclick = () => { backdrop.remove(); reloading = false; };
+  };
+  updateSheet = {
+    finished(version) {
+      stop();
+      show("done");
+      box.querySelector("#upd-note").className = "ok-box";
+      box.querySelector("#upd-note").textContent = `AniStash v${version} is running. Reloading…`;
+      setTimeout(() => location.reload(), 1500);
+    },
+  };
+  show("start");
   try {
-    await busy(button, () => api("/api/system/update-app", { method: "POST" }));
-    toast("Updating… this page reloads when AniStash is back.");
-    // The service restarts during the update: wait for the new version to answer
-    const started = Date.now();
-    const poll = setInterval(async () => {
-      try {
-        const s2 = await api("/api/status");
-        if (s2.version !== status.version) { clearInterval(poll); location.reload(); }
-      } catch { /* restarting */ }
-      if (Date.now() - started > 300000) { clearInterval(poll); toast("The update is taking long. Check `anistash-update` in the console.", true); }
-    }, 3000);
-  } catch (err) { toast(err.message, true); }
+    await api("/api/system/update-app", { method: "POST" });
+  } catch (err) {
+    show("start", true);
+    return end(`The update couldn't start: ${esc(err.message)}`, true);
+  }
+  timer = setInterval(async () => {
+    let p;
+    try { p = await api("/api/system/update-progress"); }
+    catch { show("restart"); return; }  // the service is restarting
+    if (!updateSheet) return;  // the new version answered (serverUpdated took over)
+    if (p.state === "running") show(p.step === "rollback" ? "restart" : p.step || "start", p.step === "rollback");
+    else if (p.state === "failed" && p.at * 1000 >= started - 5000) {
+      show(current, true);
+      end(`The update didn't work: ${esc(p.message)} ${p.message.includes("back on") ? "" : "AniStash wasn't changed."}`, true);
+    } else if (p.state === "done" && p.at * 1000 >= started - 5000 && p.version === PAGE_VERSION) {
+      end(esc(p.message || "AniStash is already up to date."), false);
+    }
+    if (updateSheet && Date.now() - started > 600000) {
+      end("The update is taking very long. Run <code>anistash-update</code> in the container's console to see what's happening.", true);
+    }
+  }, 2000);
 }
 
 async function refreshUpdateBanner() {
@@ -2160,7 +2247,7 @@ async function refreshUpdateBanner() {
     ${info.can_update ? `<button class="primary small" id="banner-update" data-tip="Install the update now. Your settings, users and downloads stay">Update now</button>` : ""}
     <button class="ghost small icon" id="banner-close" aria-label="Hide until next visit" data-tip="Hide this until you next open AniStash">${icon("x")}</button>
   </div>`;
-  $("#banner-update", banner)?.addEventListener("click", (e) => runUpdate(info.latest, e.currentTarget));
+  $("#banner-update", banner)?.addEventListener("click", (e) => runUpdate(info.latest));
   $("#banner-close", banner).addEventListener("click", () => {
     banner.hidden = true;
     try { sessionStorage.setItem("anistash-banner-dismissed", info.latest); } catch { /* storage blocked */ }

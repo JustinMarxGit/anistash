@@ -5,6 +5,17 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "0.8.1",
+        "title": "Updating from the web page",
+        "items": [
+            "Update AniStash shows each step as it happens (download, install, restart), then reloads the page "
+            "into the new version by itself. If an update fails, it tells you why.",
+            "Every open AniStash page, on any device, reloads by itself after an update, so nobody keeps using the "
+            "old version.",
+            "Check for updates (Settings → System) looks for a new version right away.",
+        ],
+    },
+    {
         "version": "0.8.0",
         "title": "Faster everywhere",
         "items": [

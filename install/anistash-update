@@ -20,12 +20,40 @@ if [[ -f /etc/anistash/anistash.env ]]; then
 fi
 REPO="${ANISTASH_REPO:-JustinMarxGit/anistash}"
 PORT="${ANISTASH_PORT:-8000}"
+# The web UI reads this to show the update's progress (and why it failed)
+PROGRESS="${ANISTASH_DATA_DIR:-/var/lib/anistash}/update.json"
 
 GN=$'\e[32m' YW=$'\e[33m' RD=$'\e[31m' BL=$'\e[36m' CL=$'\e[0m'
 ok() { echo -e " ${GN}✓${CL} $*"; }
 info() { echo -e " ${BL}…${CL} $*"; }
 warn() { echo -e " ${YW}!${CL} $*"; }
-die() { echo -e " ${RD}✗${CL} $*" >&2; exit 1; }
+die() { echo -e " ${RD}✗${CL} $*" >&2; progress failed "" "$*"; exit 1; }
+
+# progress <running|done|failed> <step> [message]
+progress() {
+    [[ -d $(dirname "$PROGRESS") ]] || return 0
+    python3 - "$PROGRESS" "$1" "$2" "${3:-}" "${current:-}" "${want:-}" <<'PY' || true
+import json, os, sys, time
+path, state, step, message, current, target = sys.argv[1:]
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump({"state": state, "step": step, "message": message, "from": current, "to": target,
+               "at": int(time.time())}, f)
+os.chmod(tmp, 0o644)
+os.replace(tmp, path)
+PY
+    chown anistash:anistash "$PROGRESS" 2>/dev/null || true
+    [[ $1 == running ]] || reported=1
+}
+reported=0
+# Anything that stops the update without saying why still shows up as a failure in the UI
+on_exit() {
+    local code=$?
+    if [[ $code -ne 0 && $code -ne 10 && $reported -eq 0 && ${started:-0} -eq 1 ]]; then
+        progress failed "" "The update stopped unexpectedly (exit $code). Run anistash-update in the container's console for details."
+    fi
+}
+trap on_exit EXIT
 
 usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
@@ -64,6 +92,7 @@ fi
 
 if [[ -z $branch && $want == "$current" ]]; then
     ok "anistash $current is the newest release."
+    [[ $check_only -eq 1 ]] || progress done "" "AniStash $current is already the newest release."
     exit 0
 fi
 if [[ $check_only -eq 1 ]]; then
@@ -85,13 +114,16 @@ fi
 previous="$(git -C "$APP" rev-parse HEAD)"
 rollback() {
     warn "Update failed, going back to $current_ref"
+    progress running rollback "The new version didn't start. Going back to $current…"
     git -C "$APP" checkout --quiet --force "$previous"
     bash "$APP/install/deploy.sh" || true
     systemctl restart anistash.service || true
     die "anistash is back on $current_ref. Nothing else was changed."
 }
 
+started=1
 info "Downloading $want"
+progress running download
 git -C "$APP" fetch --quiet --tags --force origin
 if [[ -n $branch ]]; then
     git -C "$APP" fetch --quiet origin "$branch"
@@ -104,7 +136,9 @@ ok "Fetched $(git -C "$APP" describe --tags --always)"
 
 trap rollback ERR
 info "Installing"
+progress running install
 bash "$APP/install/deploy.sh"
+progress running restart
 systemctl restart anistash.service
 for _ in $(seq 1 30); do
     curl -fs "http://127.0.0.1:$PORT/api/status" >/dev/null && break
@@ -113,6 +147,7 @@ done
 curl -fs "http://127.0.0.1:$PORT/api/status" >/dev/null || false  # not up after 30s: roll back
 trap - ERR
 ok "anistash is now on v$(cat "$APP/VERSION") ($(git -C "$APP" describe --tags --always))"
+progress done "" "AniStash is now on v$(cat "$APP/VERSION")."
 
 info "Updating ani-cli and yt-dlp"
 "/usr/local/lib/anistash/anistash-helper" update-tools >/dev/null && ok "Tools updated" || warn "Tool update failed (anistash still works; try again later)"

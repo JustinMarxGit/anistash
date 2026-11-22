@@ -7,6 +7,7 @@ a version that already failed for 12 hours.
 """
 
 import asyncio
+import json
 import logging
 import time
 
@@ -22,9 +23,30 @@ def status() -> dict:
     return {"current": config.VERSION, "auto_update": bool(db.get_setting("auto_update"))}
 
 
-async def info() -> dict:
-    latest = await setup.latest_release()
+async def info(fresh: bool = False) -> dict:
+    latest = await setup.latest_release(fresh)
     return {**status(), "latest": latest, "update_available": setup._newer(latest, config.VERSION)}
+
+
+def _progress_file():
+    return config.DATA_DIR / "update.json"  # written by anistash-update (as root) while it runs
+
+
+def progress() -> dict:
+    """How the last update went: {state: running|done|failed, step, message, from, to, at}."""
+    try:
+        data = json.loads(_progress_file().read_text())
+    except (OSError, ValueError):
+        return {"state": "none", "version": config.VERSION}
+    return {**data, "version": config.VERSION}
+
+
+def _write_progress(**data) -> None:
+    path = _progress_file()
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps({"step": "", "message": "", "from": f"v{config.VERSION}", "to": "",
+                               "at": int(time.time()), **data}))
+    tmp.replace(path)
 
 
 def _busy() -> bool:
@@ -33,7 +55,12 @@ def _busy() -> bool:
 
 async def start_update(actor: str, ip: str = "") -> None:
     """Starts anistash-update in the background (it restarts this service)."""
-    await locations._helper("update-app")
+    _write_progress(state="running", step="start")  # so the page never reads the last update's result
+    try:
+        await locations._helper("update-app")
+    except Exception as exc:
+        _write_progress(state="failed", message=str(exc))
+        raise
     auth.audit(actor, "update_started", "", ip)
 
 

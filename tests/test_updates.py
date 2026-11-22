@@ -16,7 +16,7 @@ def run(coro):
 def newer_release(isolated, monkeypatch):
     started = []
 
-    async def latest():
+    async def latest(fresh=False):
         return "v9.9.9"
 
     async def start(actor, ip=""):
@@ -53,7 +53,7 @@ def test_auto_update_waits_for_downloads(newer_release, isolated):
 
 
 def test_up_to_date(isolated, monkeypatch):
-    async def latest():
+    async def latest(fresh=False):
         return f"v{config.VERSION}"
     monkeypatch.setattr(updates.setup, "latest_release", latest)
     monkeypatch.setattr(config, "helper_available", lambda: True)
@@ -83,3 +83,57 @@ def test_only_admins_see_or_run_updates(newer_release, isolated):
     assert admin.put("/api/settings", json={"auto_update": True}).json()["auto_update"] is True
     assert admin.post("/api/system/update-app").status_code == 200
     assert newer_release == ["admin"]
+
+
+def test_update_progress_is_reported_to_admins(isolated, monkeypatch):
+    async def helper(command, payload=None):
+        assert command == "update-app"
+        return {"ok": True}
+
+    monkeypatch.setattr(updates.locations, "_helper", helper)
+    assert updates.progress()["state"] == "none"
+    run(updates.start_update("admin"))
+    assert updates.progress()["state"] == "running" and updates.progress()["step"] == "start"
+    # what anistash-update writes when the new version doesn't come up
+    (config.DATA_DIR / "update.json").write_text(
+        '{"state": "failed", "step": "", "message": "anistash is back on v0.8.0.", "from": "v0.8.0", "to": "v0.9.0", "at": 1}')
+    done = updates.progress()
+    assert done["state"] == "failed" and "back on" in done["message"] and done["version"] == config.VERSION
+
+
+def test_failing_helper_marks_the_update_failed(isolated, monkeypatch):
+    async def helper(command, payload=None):
+        raise updates.locations.LocationError("Couldn't start the update")
+
+    monkeypatch.setattr(updates.locations, "_helper", helper)
+    with pytest.raises(updates.locations.LocationError):
+        run(updates.start_update("admin"))
+    assert updates.progress()["state"] == "failed"
+
+
+def test_pages_can_tell_the_server_was_updated(isolated):
+    with TestClient(main.app, headers=HEADERS) as c:
+        page = c.get("/")
+        assert f'<meta name="anistash-version" content="{config.VERSION}">' in page.text
+        assert page.headers["x-anistash-version"] == config.VERSION
+        assert c.get("/api/status").headers["x-anistash-version"] == config.VERSION
+
+
+def test_check_for_updates_skips_the_cache(isolated, monkeypatch):
+    calls = []
+
+    class Resp:
+        status_code = 200
+
+        def json(self):
+            return {"tag_name": f"v{len(calls)}.0.0"}
+
+    class Client:
+        async def get(self, url, headers=None):
+            calls.append(url)
+            return Resp()
+
+    monkeypatch.setattr(updates.setup.net, "client", lambda name, timeout=15: Client())
+    assert run(updates.setup.latest_release()) == "v1.0.0"
+    assert run(updates.setup.latest_release()) == "v1.0.0"  # cached
+    assert run(updates.setup.latest_release(fresh=True)) == "v2.0.0"
