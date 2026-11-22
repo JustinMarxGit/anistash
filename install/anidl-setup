@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+# Console setup for anidl. It runs the same steps as the web wizard (it calls the
+# same Python code), for when the web UI isn't reachable or you prefer a terminal.
+#
+#   anidl-setup                    menu
+#   anidl-setup --reset-password   set a new admin password (locked out of the web UI)
+#   anidl-setup --reset            forget all configuration (downloads are kept)
+set -uo pipefail
+
+APP=/opt/anidl
+TITLE="anidl setup"
+export NEWT_COLORS='root=,black window=,black border=white,black textbox=white,black button=black,white'
+
+[[ $EUID -eq 0 ]] || { echo "Run anidl-setup as root." >&2; exit 1; }
+command -v whiptail >/dev/null || { echo "whiptail is missing: apt install whiptail" >&2; exit 1; }
+
+# Run the setup CLI as the app user, so files it creates stay owned by anidl
+cli() {
+    (cd "$APP" && runuser -u anidl -- env ANIDL_DATA_DIR=/var/lib/anidl "$APP/venv/bin/python" -m app.setup "$@")
+}
+
+# Builds a JSON object from key value pairs without any shell quoting surprises
+json() { python3 -c 'import json,sys; a=sys.argv[1:]; print(json.dumps(dict(zip(a[::2], a[1::2]))))' "$@"; }
+
+msg() { whiptail --title "$TITLE" --msgbox "$1" 0 0 3>&1 1>&2 2>&3; }
+input() { whiptail --title "$TITLE" --inputbox "$1" 10 72 "${2:-}" 3>&1 1>&2 2>&3; }
+secret() { whiptail --title "$TITLE" --passwordbox "$1" 10 72 3>&1 1>&2 2>&3; }
+yesno() { whiptail --title "$TITLE" --yesno "$1" 0 0; }
+
+# Runs a CLI command and shows its output (or error) in a box. Returns the CLI's status.
+show() {
+    local out status
+    out="$(cli "$@" 2>&1)"
+    status=$?
+    msg "${out:-Done.}"
+    return $status
+}
+
+admin_account() {
+    local user pw pw2
+    user="$(input "Admin username:" "admin")" || return 1
+    while :; do
+        pw="$(secret "Password for $user (8+ characters):")" || return 1
+        pw2="$(secret "Repeat the password:")" || return 1
+        [[ $pw == "$pw2" ]] && break
+        msg "The passwords don't match. Try again."
+    done
+    printf '%s\n' "$pw" | show set-admin --username "$user"
+}
+
+reset_password() {
+    local pw pw2
+    while :; do
+        pw="$(secret "New admin password (8+ characters):")" || return 1
+        pw2="$(secret "Repeat the password:")" || return 1
+        [[ $pw == "$pw2" ]] && break
+        msg "The passwords don't match. Try again."
+    done
+    printf '%s\n' "$pw" | show reset-password
+}
+
+add_location() {
+    local kind name spec server share subpath user pw domain vers nfs_export opts path srv
+    kind="$(whiptail --title "$TITLE" --menu "What kind of download location?" 14 72 3 \
+        smb "SMB / Samba / Windows share (most NAS boxes)" \
+        nfs "NFS export" \
+        local "Folder in this container (e.g. a Proxmox bind mount)" 3>&1 1>&2 2>&3)" || return 1
+    name="$(input "Name for this location:" "NAS anime")" || return 1
+    case "$kind" in
+        smb)
+            server="$(input "SMB server (IP or hostname):")" || return 1
+            share="$(input "Share name:" "media")" || return 1
+            subpath="$(input "Subfolder inside the share (optional):" "anime")" || return 1
+            user="$(input "Username (blank for guest):")" || return 1
+            pw="$(secret "Password:")" || return 1
+            domain="$(input "Domain (optional):")" || return 1
+            vers="$(whiptail --title "$TITLE" --menu "SMB version (default works for most):" 16 60 6 \
+                default "Negotiate automatically" 3.1.1 "" 3.0 "" 2.1 "" 2.0 "" 1.0 "Old devices only" 3>&1 1>&2 2>&3)" || return 1
+            spec="$(json name "$name" type smb server "$server" share "$share" subpath "$subpath" \
+                username "$user" password "$pw" domain "$domain" vers "$vers")"
+            ;;
+        nfs)
+            server="$(input "NFS server (IP or hostname):")" || return 1
+            nfs_export="$(input "Export path:" "/mnt/pool/media/anime")" || return 1
+            opts="$(input "Mount options (optional):" "vers=4.1")" || return 1
+            spec="$(json name "$name" type nfs server "$server" export "$nfs_export" options "$opts")"
+            ;;
+        local)
+            path="$(input "Folder (under /mnt, /media, /srv, /data, /downloads, /storage or /home):" "/mnt/media/anime")" || return 1
+            spec="$(json name "$name" type local path "$path")"
+            ;;
+    esac
+    srv="$(input "How Jellyfin/Plex sees this folder (optional, makes scans faster):")" || return 1
+    spec="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); d["server_path"]=sys.argv[2]; print(json.dumps(d))' "$spec" "$srv")"
+    whiptail --title "$TITLE" --infobox "Mounting and testing $name…" 7 50
+    printf '%s' "$spec" | show add-location
+}
+
+pick_location() {
+    local rows=() id rest
+    while IFS=$'\t' read -r id rest; do
+        [[ -n $id ]] && rows+=("$id" "$rest")
+    done < <(cli list-locations 2>/dev/null)
+    [[ ${#rows[@]} -gt 0 ]] || { msg "No download locations yet."; return 1; }
+    whiptail --title "$TITLE" --menu "$1" 18 100 8 "${rows[@]}" 3>&1 1>&2 2>&3
+}
+
+locations_menu() {
+    local choice id path
+    while :; do
+        choice="$(whiptail --title "$TITLE" --menu "Download locations" 17 72 7 \
+            list "Show locations and their status" \
+            add "Add a location" \
+            test "Test (and remount) a location" \
+            default "Make a location the default" \
+            server-path "Set how Jellyfin/Plex sees a location" \
+            remove "Remove a location (files are kept)" \
+            back "Back" 3>&1 1>&2 2>&3)" || return 0
+        case "$choice" in
+            list) msg "$(cli list-locations 2>&1 | tr '\t' '|' | sed 's/|/  |  /g')" ;;
+            add) add_location ;;
+            test) id="$(pick_location "Test which location?")" && show test-location "$id" ;;
+            default) id="$(pick_location "Default location:")" && show default-location "$id" ;;
+            server-path) id="$(pick_location "Which location?")" && path="$(input "Path as Jellyfin/Plex sees it:")" && show server-path "$id" "$path" ;;
+            remove) id="$(pick_location "Remove which location?")" && yesno "Remove location $id? Downloaded files stay where they are." && show remove-location "$id" ;;
+            back) return 0 ;;
+        esac
+    done
+}
+
+media_server() {
+    local kind url token rows=() id rest lib
+    kind="$(whiptail --title "$TITLE" --menu "Which media server should anidl tell about new downloads?" 14 72 3 \
+        jellyfin "Jellyfin" plex "Plex" none "None" 3>&1 1>&2 2>&3)" || return 1
+    if [[ $kind == none ]]; then
+        printf '\n' | show set-media-server --kind none
+        return
+    fi
+    if [[ $kind == jellyfin ]]; then
+        url="$(input "Jellyfin URL:" "http://192.168.1.20:8096")" || return 1
+        token="$(secret "Jellyfin API key (Dashboard → API Keys → +):")" || return 1
+    else
+        url="$(input "Plex URL:" "http://192.168.1.20:32400")" || return 1
+        token="$(secret "Plex token (X-Plex-Token; Plex Web → item → Get Info → View XML):")" || return 1
+    fi
+    printf '%s\n' "$token" | cli set-media-server --kind "$kind" --url "$url" >/dev/null 2>&1
+    show test-media-server || return 1
+    while IFS=$'\t' read -r id rest; do
+        [[ -n $id ]] && rows+=("$id" "$rest")
+    done < <(cli media-libraries 2>/dev/null)
+    [[ ${#rows[@]} -gt 0 ]] || { msg "No libraries found on the server."; return 1; }
+    lib="$(whiptail --title "$TITLE" --menu "Your anime library. anidl only ever scans this one:" 18 100 8 "${rows[@]}" 3>&1 1>&2 2>&3)" || return 1
+    show media-library "$lib"
+}
+
+defaults() {
+    local mode quality conc naming skip refresh
+    mode="$(whiptail --title "$TITLE" --menu "Audio:" 12 50 2 sub "Subtitled" dub "Dubbed" 3>&1 1>&2 2>&3)" || return 1
+    quality="$(whiptail --title "$TITLE" --menu "Quality (falls back to the next lower one if a download fails):" 16 72 6 \
+        best "Highest available" 1080 "Up to 1080p" 720 "Up to 720p" 480 "Up to 480p" 360 "Up to 360p" worst "Smallest" 3>&1 1>&2 2>&3)" || return 1
+    conc="$(whiptail --title "$TITLE" --menu "Downloads at once:" 14 40 5 1 "" 2 "" 3 "" 4 "" 5 "" 3>&1 1>&2 2>&3)" || return 1
+    naming="$(whiptail --title "$TITLE" --menu "File naming:" 12 90 2 \
+        server "Jellyfin / Plex: Show (2013)/Season 01/Show (2013) - S01E01.mp4" \
+        original "ani-cli's own: Show/Title Episode 1.mp4" 3>&1 1>&2 2>&3)" || return 1
+    if yesno "Skip episodes that are already downloaded?"; then skip=true; else skip=false; fi
+    refresh="$(whiptail --title "$TITLE" --menu "When to ask the media server to scan:" 12 60 3 \
+        season "When a season finishes" episode "After every episode" off "Never" 3>&1 1>&2 2>&3)" || return 1
+    python3 -c 'import json,sys; m,q,c,n,s,r=sys.argv[1:]; print(json.dumps({"mode":m,"quality":q,"concurrency":int(c),"naming":n,"skip_existing":s=="true","media_refresh":r}))' \
+        "$mode" "$quality" "$conc" "$naming" "$skip" "$refresh" | show set-defaults
+}
+
+full_setup() {
+    whiptail --title "$TITLE" --infobox "Checking ani-cli, yt-dlp and ffmpeg, and trying a test search…" 7 70
+    msg "System check:\n\n$(cli check 2>&1)"
+    admin_account || return
+    msg "Now add where downloads should go. You can add more later."
+    add_location || return
+    while yesno "Add another download location?"; do add_location; done
+    if yesno "Connect Jellyfin or Plex so new downloads show up right away?"; then media_server; fi
+    defaults || return
+    show complete && msg "Setup complete. Open http://$(hostname -I | awk '{print $1}'):$(sed -n 's/^ANIDL_PORT=//p' /etc/anidl/anidl.env) and log in."
+}
+
+case "${1:-}" in
+    --reset-password) reset_password; exit ;;
+    --reset)
+        yesno "Forget ALL anidl configuration (account, locations, media server, queue)?\n\nDownloaded files are kept." &&
+            show reset --yes
+        exit ;;
+    -h | --help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    "") ;;
+    *) echo "Unknown option: $1 (see --help)" >&2; exit 1 ;;
+esac
+
+while :; do
+    choice="$(whiptail --title "$TITLE" --menu "$(cli status 2>/dev/null | python3 -c 'import json,sys; s=json.load(sys.stdin); print("Setup complete" if s["setup_complete"] else "Setup NOT finished", "·", s["location_count"], "location(s) · v" + s["version"])' 2>/dev/null)" 19 72 9 \
+        setup "Run the full setup" \
+        admin "Create admin account / change login" \
+        password "Reset the admin password" \
+        locations "Download locations" \
+        media "Media server (Jellyfin / Plex)" \
+        defaults "Download defaults" \
+        check "System check" \
+        reset "Reset all configuration" \
+        exit "Exit" 3>&1 1>&2 2>&3)" || exit 0
+    case "$choice" in
+        setup) full_setup ;;
+        admin) admin_account ;;
+        password) reset_password ;;
+        locations) locations_menu ;;
+        media) media_server ;;
+        defaults) defaults ;;
+        check) whiptail --title "$TITLE" --infobox "Checking…" 7 30; msg "$(cli check 2>&1)" ;;
+        reset) yesno "Forget ALL configuration? Downloaded files are kept." && show reset --yes ;;
+        exit) exit 0 ;;
+    esac
+done

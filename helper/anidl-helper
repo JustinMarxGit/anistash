@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""Root-only helper for anidl. The web app runs as the unprivileged `anidl` user and
+may run this (and only this) through sudo. Every value is validated here, because
+this is the trust boundary: never pass anything from it to a shell.
+
+  anidl-helper mount           < {"id": 3, "type": "smb", ...}   write + start a systemd mount unit
+  anidl-helper unmount ID                                         stop and delete a location's mount
+  anidl-helper remount ID                                         restart a location's mount
+  anidl-helper prepare-local   < {"path": "/mnt/media/anime"}     create a local folder owned by anidl
+  anidl-helper update-tools                                       update ani-cli and yt-dlp
+  anidl-helper update-app                                         run anidl-update -y in the background
+
+Prints one JSON object: {"ok": true, ...} or {"ok": false, "error": "..."}.
+"""
+
+import json
+import os
+import pwd
+import re
+import subprocess
+import sys
+
+MOUNT_ROOT = "/mnt/anidl"
+CREDS_DIR = "/etc/anidl/creds"
+UNIT_DIR = "/etc/systemd/system"
+APP_USER = "anidl"
+LOCAL_PATH_PREFIXES = ("/mnt/", "/media/", "/srv/", "/data/", "/downloads/", "/storage/", "/home/")
+
+SERVER = re.compile(r"^[A-Za-z0-9.\-]{1,253}$|^\[?[0-9A-Fa-f:]{2,45}\]?$")
+SMB_PART = re.compile(r"^[A-Za-z0-9_.$\-]{1,200}$")
+NFS_EXPORT = re.compile(r"^/[A-Za-z0-9_.\-/]{0,400}$")
+NFS_OPTIONS = re.compile(r"^[A-Za-z0-9_=.,:\-]{0,200}$")
+USERNAME = re.compile(r"^[A-Za-z0-9_.@\-]{0,100}$")
+DOMAIN = re.compile(r"^[A-Za-z0-9_.\-]{0,100}$")
+SMB_VERSIONS = {"", "default", "3.1.1", "3.0", "2.1", "2.0", "1.0"}
+
+
+class Invalid(Exception):
+    pass
+
+
+def done(**data):
+    print(json.dumps({"ok": True, **data}))
+    sys.exit(0)
+
+
+def fail(message):
+    print(json.dumps({"ok": False, "error": message}))
+    sys.exit(1)
+
+
+def check(pattern, value, name):
+    if not isinstance(value, str) or not pattern.match(value):
+        raise Invalid(f"{name} contains characters that aren't allowed")
+    return value
+
+
+def location_id(value):
+    if isinstance(value, int) and 0 < value < 1_000_000:
+        return value
+    if isinstance(value, str) and value.isdigit() and 0 < int(value) < 1_000_000:
+        return int(value)
+    raise Invalid("Invalid location id")
+
+
+def unit_name(loc_id):
+    return f"mnt-anidl-loc{loc_id}.mount"
+
+
+def run(*args, timeout=60):
+    return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+
+
+def app_ids():
+    user = pwd.getpwnam(APP_USER)
+    return user.pw_uid, user.pw_gid
+
+
+def mount(spec):
+    loc_id = location_id(spec.get("id"))
+    kind = spec.get("type")
+    where = f"{MOUNT_ROOT}/loc{loc_id}"
+    options = ["_netdev", "nofail"]
+
+    if kind == "smb":
+        server = check(SERVER, spec.get("server", ""), "Server")
+        share = check(SMB_PART, spec.get("share", ""), "Share name")
+        subpath = spec.get("subpath", "").strip("/")
+        for part in filter(None, subpath.split("/")):
+            check(SMB_PART, part, "Subfolder")
+        what = f"//{server}/{share}" + (f"/{subpath}" if subpath else "")
+        vers = spec.get("vers", "")
+        if vers not in SMB_VERSIONS:
+            raise Invalid("Unknown SMB version")
+        creds = f"{CREDS_DIR}/{loc_id}"
+        username = check(USERNAME, spec.get("username", ""), "Username")
+        domain = check(DOMAIN, spec.get("domain", ""), "Domain")
+        password = spec.get("password")
+        if password is not None:
+            if not isinstance(password, str) or "\n" in password or "\r" in password or "\0" in password:
+                raise Invalid("Password can't contain line breaks")
+        elif os.path.exists(creds):
+            # Editing without re-entering the password keeps the saved one
+            with open(creds) as f:
+                saved = dict(line.rstrip("\n").split("=", 1) for line in f if "=" in line)
+            password = saved.get("password", "")
+        else:
+            password = ""
+        os.makedirs(CREDS_DIR, mode=0o700, exist_ok=True)
+        fd = os.open(creds, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(f"username={username or 'guest'}\npassword={password}\n")
+            if domain:
+                f.write(f"domain={domain}\n")
+        uid, gid = app_ids()
+        options += [f"credentials={creds}", f"uid={uid}", f"gid={gid}", "file_mode=0664", "dir_mode=0775", "iocharset=utf8"]
+        if vers not in ("", "default"):
+            options.append(f"vers={vers}")
+        fstype = "cifs"
+    elif kind == "nfs":
+        server = check(SERVER, spec.get("server", ""), "Server")
+        export = check(NFS_EXPORT, spec.get("export", ""), "Export path")
+        extra = check(NFS_OPTIONS, spec.get("options", ""), "NFS options")
+        what = f"{server}:{export}"
+        options += [o for o in extra.split(",") if o]
+        fstype = "nfs"
+    else:
+        raise Invalid("Mount type must be smb or nfs")
+
+    os.makedirs(where, exist_ok=True)
+    unit = f"""[Unit]
+Description=anidl download location {loc_id}
+After=network-online.target
+Wants=network-online.target
+
+[Mount]
+What={what}
+Where={where}
+Type={fstype}
+Options={",".join(options)}
+TimeoutSec=30
+
+[Install]
+WantedBy=multi-user.target
+"""
+    name = unit_name(loc_id)
+    with open(f"{UNIT_DIR}/{name}", "w") as f:
+        f.write(unit)
+    run("systemctl", "daemon-reload")
+    run("systemctl", "stop", name)
+    result = run("systemctl", "enable", "--now", name)
+    if result.returncode != 0 or not os.path.ismount(where):
+        reason = journal_reason(name) or result.stderr.strip() or "unknown error"
+        fail(f"Mounting {what} failed: {reason}")
+    done(path=where)
+
+
+def journal_reason(name):
+    result = run("journalctl", "-u", name, "-n", "20", "--no-pager", "-o", "cat")
+    lines = [l for l in result.stdout.splitlines() if "error" in l.lower() or "mount" in l.lower()]
+    return lines[-1].strip() if lines else ""
+
+
+def unmount(loc_id):
+    loc_id = location_id(loc_id)
+    name = unit_name(loc_id)
+    run("systemctl", "disable", "--now", name)
+    for path in (f"{UNIT_DIR}/{name}", f"{CREDS_DIR}/{loc_id}"):
+        if os.path.exists(path):
+            os.remove(path)
+    run("systemctl", "daemon-reload")
+    where = f"{MOUNT_ROOT}/loc{loc_id}"
+    if os.path.isdir(where) and not os.path.ismount(where):
+        try:
+            os.rmdir(where)
+        except OSError:
+            pass
+    done()
+
+
+def remount(loc_id):
+    loc_id = location_id(loc_id)
+    name = unit_name(loc_id)
+    result = run("systemctl", "restart", name)
+    if result.returncode != 0:
+        fail(journal_reason(name) or result.stderr.strip() or "Remount failed")
+    done()
+
+
+def prepare_local(spec):
+    path = os.path.normpath(spec.get("path", ""))
+    if not path.startswith("/") or ".." in path.split("/") or not (path + "/").startswith(LOCAL_PATH_PREFIXES):
+        raise Invalid("Local folders must be under " + ", ".join(LOCAL_PATH_PREFIXES))
+    if path.startswith(MOUNT_ROOT + "/"):
+        raise Invalid(f"{MOUNT_ROOT} is reserved for network shares")
+    uid, gid = app_ids()
+    created = not os.path.exists(path)
+    os.makedirs(path, exist_ok=True)
+    if created:
+        os.chown(path, uid, gid)
+    done(path=path, created=created)
+
+
+def update_tools():
+    out = []
+    for args in (["ani-cli", "-U"], ["yt-dlp", "-U"]):
+        try:
+            result = run(*args, timeout=300)
+            out.append((result.stdout + result.stderr).strip()[-400:])
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            out.append(f"{args[0]}: {exc}")
+    done(output="\n".join(out))
+
+
+def update_app():
+    # Runs outside the anidl service, because the update restarts it
+    result = run("systemd-run", "--unit=anidl-self-update", "--collect", "--quiet",
+                 "/usr/local/bin/anidl-update", "--yes")
+    if result.returncode != 0:
+        fail(result.stderr.strip() or "Couldn't start the update")
+    done()
+
+
+def main():
+    if os.geteuid() != 0:
+        fail("anidl-helper must run as root")
+    if len(sys.argv) < 2:
+        fail("No command given")
+    command, args = sys.argv[1], sys.argv[2:]
+    try:
+        if command == "mount":
+            mount(json.load(sys.stdin))
+        elif command == "unmount" and len(args) == 1:
+            unmount(args[0])
+        elif command == "remount" and len(args) == 1:
+            remount(args[0])
+        elif command == "prepare-local":
+            prepare_local(json.load(sys.stdin))
+        elif command == "update-tools":
+            update_tools()
+        elif command == "update-app":
+            update_app()
+        else:
+            fail(f"Unknown command: {command}")
+    except Invalid as exc:
+        fail(str(exc))
+    except (ValueError, KeyError) as exc:
+        fail(f"Bad request: {exc}")
+    except subprocess.TimeoutExpired:
+        fail("Timed out waiting for the mount. Is the server reachable?")
+
+
+if __name__ == "__main__":
+    main()
