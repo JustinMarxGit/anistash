@@ -76,6 +76,16 @@ The path is the same folder as Jellyfin or Plex sees it. For example, your NAS s
 - **Jellyfin API key:** Dashboard → API Keys → +
 - **Plex token:** in Plex Web, open any item → ⋯ → Get Info → View XML, and copy the `X-Plex-Token` value from the address bar.
 
+## Discover
+
+- **Discover tab:** browse every anime on AniList by genre. Pick several genres to combine them; a show must have all of them.
+  - **Sort:** popular, top rated, trending or newest.
+  - **Filter:** type (TV, movies, ONA/OVA), status (airing, finished, coming soon) and year.
+  - It keeps loading as you scroll, and the filters stay in the address, so Back and shared links work.
+- **Surprise me** (Browse and Discover) opens a random anime that at least a few thousand people follow, so it's worth a look. On Discover it keeps to your genres. *Another surprise* rolls again.
+- **Anime pages:** every poster opens the anime's own page. It shows the synopsis, score, genres (tap one to browse it), studio and episodes, then *Same story* (prequels, sequels, side stories) and *More like this*, AniList fans' recommendations. *Find episodes* searches the anime site to download it.
+- **Show pages** (where you pick episodes) also suggest *More like this*.
+
 ## Recommendations
 
 Browse opens with two lists of shows that are airing now.

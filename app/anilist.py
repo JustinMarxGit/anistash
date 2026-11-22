@@ -263,3 +263,133 @@ async def other_names(query: str) -> list[str]:
     if wanted not in known and not any(wanted and wanted in k for k in known):
         return []
     return [n for n in names if normalize(n) != wanted]
+
+
+# Discover, anime pages and random picks ---------------------------------------------------------
+
+GENRES_HIDDEN = {"Hentai"}
+SORTS = {"popular": "POPULARITY_DESC", "rated": "SCORE_DESC", "trending": "TRENDING_DESC", "newest": "START_DATE_DESC"}
+FORMATS = {"tv": ["TV", "TV_SHORT"], "movie": ["MOVIE"], "ona": ["ONA", "OVA", "SPECIAL"]}
+STATUSES = {"airing": "RELEASING", "finished": "FINISHED", "upcoming": "NOT_YET_RELEASED"}
+
+
+async def genres() -> list[str]:
+    data = await _gql("query { GenreCollection }", {}, "anilist:genres", 7 * 86400)
+    return [g for g in (data or {}).get("GenreCollection") or [] if g not in GENRES_HIDDEN]
+
+
+def _filters(genre: list[str], fmt: str, status: str, year: int | None) -> tuple[dict, str]:
+    """GraphQL variables and a cache-key fragment for the Discover filters (unknown values ignored)."""
+    allowed = set(GENRES_HIDDEN)
+    variables = {
+        "genre": [g for g in genre if g not in allowed][:5] or None,
+        "format": FORMATS.get(fmt),
+        "status": STATUSES.get(status),
+        "year": year if year and 1960 <= year <= datetime.date.today().year + 2 else None,
+    }
+    key = "|".join(f"{k}={','.join(v) if isinstance(v, list) else v}" for k, v in sorted(variables.items()) if v)
+    return variables, key
+
+
+_DISCOVER = """
+query ($page: Int, $sort: [MediaSort], $genre: [String], $format: [MediaFormat], $status: MediaStatus,
+       $statusNot: MediaStatus, $year: Int, $minPopularity: Int, $perPage: Int) {
+  Page(page: $page, perPage: $perPage) {
+    pageInfo { hasNextPage total }
+    media(type: ANIME, isAdult: false, sort: $sort, genre_in: $genre, format_in: $format, status: $status,
+          status_not: $statusNot, seasonYear: $year, popularity_greater: $minPopularity) { %s }
+  }
+}""" % _CARD
+
+
+async def discover(genre: list[str], sort: str = "popular", fmt: str = "", status: str = "",
+                   year: int | None = None, page: int = 1) -> dict:
+    """One page (30) of anime matching the filters: {items, has_next}."""
+    variables, key = _filters(genre, fmt, status, year)
+    sort_key = sort if sort in SORTS else "popular"
+    variables.update(page=max(1, min(page, 200)), sort=[SORTS[sort_key]], perPage=30,
+                     # "Top rated" and "Newest" would otherwise lead with obscure entries
+                     minPopularity=2000 if sort_key == "rated" else 1000 if sort_key == "newest" else None,
+                     # "Newest" means out already, unless upcoming shows were asked for
+                     statusNot="NOT_YET_RELEASED" if sort_key == "newest" and not variables["status"] else None)
+    variables = {k: v for k, v in variables.items() if v is not None}  # AniList errors on explicit nulls
+    data = await _gql(_DISCOVER, variables, f"anilist:discover:{sort_key}:{key}:{variables['page']}", 3 * 3600)
+    page_data = (data or {}).get("Page") or {}
+    return {"items": [_card(m) for m in page_data.get("media") or []],
+            "has_next": bool((page_data.get("pageInfo") or {}).get("hasNextPage"))}
+
+
+async def random_pick(genre: list[str], fmt: str = "", status: str = "") -> dict | None:
+    """A random reasonably well-known anime (at least 3000 people track it) matching the filters.
+
+    AniList's result count is capped, so the real number of pages is found on the way: a page
+    past the end lowers the limit (remembered per filter for a day) and another page is tried."""
+    import random
+    variables, key = _filters(genre, fmt, status, None)
+    variables.update(sort=["POPULARITY_DESC"], perPage=50, minPopularity=3000)
+    variables = {k: v for k, v in variables.items() if v is not None}
+    limit_key = f"anilist:random-pages:{key}"
+    row = db.query_one("SELECT value FROM cache WHERE key = ? AND expires_at > ?", (limit_key, int(time.time())))
+    pages = json.loads(row["value"]) if row else 100
+    for _ in range(8):
+        page = random.randint(1, max(1, pages))
+        data = await _gql(_DISCOVER, {**variables, "page": page}, f"anilist:random:{key}:{page}", 86400)
+        media = ((data or {}).get("Page") or {}).get("media") or []
+        if media:
+            return _card(random.choice(media))
+        if page == 1:
+            return None  # nothing matches at all
+        pages = page - 1
+        db.execute("INSERT OR REPLACE INTO cache (key, value, expires_at) VALUES (?, ?, ?)",
+                   (limit_key, json.dumps(pages), int(time.time()) + 86400))
+    return None
+
+
+_DETAILS = """
+query ($id: Int) {
+  Media(id: $id, type: ANIME) {
+    %s synonyms description(asHtml: false) status season duration popularity favourites idMal
+    title { native }
+    startDate { year month day } endDate { year month day }
+    studios(isMain: true) { nodes { name } }
+    nextAiringEpisode { episode airingAt }
+    tags { name rank isMediaSpoiler }
+    relations { edges { relationType node { %s type } } }
+    recommendations(perPage: 16, sort: RATING_DESC) { nodes { rating mediaRecommendation { %s } } }
+  }
+}""" % (_CARD, _CARD, _CARD)
+
+_RELATIONS_SHOWN = {"PREQUEL": "Prequel", "SEQUEL": "Sequel", "PARENT": "Main story", "SIDE_STORY": "Side story",
+                    "SPIN_OFF": "Spin-off", "ALTERNATIVE": "Alternative version"}
+
+
+async def details(media_id: int) -> dict | None:
+    """Everything an anime page shows, with related entries and 'more like this'."""
+    data = await _gql(_DETAILS, {"id": media_id}, f"anilist:details:{media_id}", 86400)
+    media = (data or {}).get("Media")
+    if not media:
+        return None
+    order = list(_RELATIONS_SHOWN)
+    edges = [e for e in (media.get("relations") or {}).get("edges") or []
+             if e["node"].get("type") == "ANIME" and e["relationType"] in _RELATIONS_SHOWN]
+    edges.sort(key=lambda e: (order.index(e["relationType"]), e["node"].get("seasonYear") or 0))
+    relations = [{**_card(e["node"]), "relation": _RELATIONS_SHOWN[e["relationType"]]} for e in edges]
+    similar = [_card(n["mediaRecommendation"]) for n in (media.get("recommendations") or {}).get("nodes") or []
+               if n.get("mediaRecommendation") and (n.get("rating") or 0) > 0]
+    start = media.get("startDate") or {}
+    return {
+        **_card(media),
+        "cover": (media.get("coverImage") or {}).get("extraLarge") or (media.get("coverImage") or {}).get("large"),
+        "native": (media.get("title") or {}).get("native") or "",
+        "names": _names(media),
+        "description": (media.get("description") or "").replace("<br>", "\n"),
+        "genres": media.get("genres") or [],
+        "tags": [t["name"] for t in media.get("tags") or [] if not t.get("isMediaSpoiler") and (t.get("rank") or 0) >= 60][:8],
+        "status": media.get("status"), "season": media.get("season"), "duration": media.get("duration"),
+        "popularity": media.get("popularity"), "favourites": media.get("favourites"), "mal_id": media.get("idMal"),
+        "start": [start.get("year"), start.get("month"), start.get("day")],
+        "studio": next((s["name"] for s in (media.get("studios") or {}).get("nodes") or []), ""),
+        "next_episode": media.get("nextAiringEpisode"),
+        "relations": relations,
+        "similar": similar,
+    }

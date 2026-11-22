@@ -124,7 +124,7 @@ body.scrolled .topbar { border-bottom-color: var(--border); }
 
 .nav {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   height: calc(var(--nav-h) + env(safe-area-inset-bottom));
   padding: 6px 8px env(safe-area-inset-bottom);
   background: var(--surface);
@@ -352,6 +352,37 @@ input::placeholder { color: var(--muted); opacity: .8; }
   background: var(--ok); color: #fff; font-size: .72rem; font-weight: 700; white-space: nowrap; animation: pop .5s var(--spring) both; }
 .inlib .i { width: 13px; height: 13px; stroke-width: 2.6; vertical-align: 0; }
 .poster .inlib { position: absolute; left: 7px; bottom: 7px; box-shadow: 0 2px 8px rgb(0 0 0 / 45%); }
+
+/* Settings: the update card leads the page */
+.update-card .update-head { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem 1rem; }
+.update-card .update-head h2 { margin-bottom: .2rem; }
+.update-card.has-update { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow); }
+
+/* Genres, Discover and anime pages */
+.chips-row { display: flex; gap: .45rem; overflow-x: auto; scrollbar-width: none; margin: 0 -16px 1.6rem; padding: 2px 16px 4px; }
+.chips-row::-webkit-scrollbar { display: none; }
+.chips-row.wrap { flex-wrap: wrap; overflow: visible; margin: 0 0 1rem; padding: 0; }
+.chip { flex: none; display: inline-flex; align-items: center; min-height: 36px; padding: .35rem .85rem; border-radius: 99px;
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); font-size: .86rem; font-weight: 600;
+  text-decoration: none; cursor: pointer; transition: background .2s, color .2s, border-color .2s, transform .25s var(--spring); }
+.chip:hover { border-color: var(--accent); color: var(--accent); }
+.chip:active { transform: scale(.95); }
+.chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.chip.skel { border-color: transparent; }
+.genres .chip { min-height: 30px; padding: .2rem .7rem; font-size: .8rem; }
+.discover-filters { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-bottom: 1.2rem; }
+.discover-filters select { width: auto; min-height: 40px; }
+.discover-filters .segmented { flex-wrap: wrap; }
+.score-big { display: inline-flex; align-items: center; gap: .25rem; padding: .2rem .6rem .2rem .45rem; border-radius: 9px;
+  background: var(--surface-2); font-family: var(--display); font-weight: 750; font-variant-numeric: tabular-nums; }
+.score-big .i { width: 15px; height: 15px; color: var(--accent); fill: var(--accent); }
+.hero-text .eyebrow { display: inline-flex; align-items: center; gap: .35rem; font-size: .74rem; font-weight: 700;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.hero-text .eyebrow .i { width: 15px; height: 15px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: .6rem; margin: 1rem 0; }
+.facts > div { display: flex; flex-direction: column; gap: .1rem; padding: .6rem .8rem; border-radius: 12px; background: var(--surface-2); }
+.facts b { font-size: .92rem; }
+.genres.tags { margin-bottom: 1.4rem; }
 
 /* Ratings on posters */
 .poster .score { position: absolute; z-index: 2; top: 7px; right: 7px; display: inline-flex; align-items: center; gap: .2rem;

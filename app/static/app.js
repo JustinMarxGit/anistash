@@ -332,6 +332,12 @@ const TIPS = [
   ['[data-shelf="1"]', "Scroll this row to see more"],
   ['#media-user', "Which Jellyfin/Plex account is yours. Picked for you suggests shows like the ones it watches"],
   ['[data-media]', "Which Jellyfin/Plex account is this person's, for their Picked for you"],
+  ['#surprise', "Open a random anime: a good way to find something new. On Discover it keeps to the genres you picked"],
+  ['#again', "Pick another random anime"],
+  ['.chip', "Show anime of this genre"],
+  ['[data-sort="rated"]', "Best scored by fans first"],
+  ['[data-sort="newest"]', "Most recently started first"],
+  ['#find', "Look this show up on the anime site to pick seasons and episodes to download"],
   ['#mal-clear', "Forget the saved MyAnimeList Client ID (Jikan is used instead)"],
   ['#check-updates', "Ask GitHub now whether a newer AniStash is out (normally checked every few hours)"],
   ['#auto-update', "Install new AniStash versions by themselves, while nothing is downloading"],
@@ -459,7 +465,11 @@ function tourSteps() {
     { route: "#/", el: "#foryou, #foryou-hint", title: "Picked for you",
       text: "Shows airing now that are close to what you watch in Jellyfin or Plex, and what you have and follow, with the reason underneath. The more you watch, the better it gets." },
     { route: "#/", el: ".poster", title: "Found something?",
-      text: "Tap a poster to look it up and see its seasons and episodes." },
+      text: "Tap a poster to see what it's about, where it fits in its story, and more shows like it. Find episodes takes you to downloading." },
+    { route: "#/discover", el: "#genres", title: "Discover",
+      text: "Browse every anime by genre: pick one or more, then sort by popular, top rated, trending or newest, and narrow it by type, status or year." },
+    { route: "#/discover", el: "#surprise", title: "Surprise me",
+      text: "Can't decide? Surprise me opens a random, well-liked anime, keeping to the genres you picked." },
     { route: "#/search", el: "#search", title: "Search",
       text: "Type a show's name and press Search. Tap a result to open it." },
     { route: "#/search", el: ".segmented[aria-label=Audio]", title: "Sub, Dub or both",
@@ -578,6 +588,8 @@ document.addEventListener("keydown", (e) => {
 const routes = {
   "": browseView,
   "search": searchView,
+  "discover": discoverView,
+  "anime": animeView,
   "show": showView,
   "downloads": downloadsView,
   "settings": settingsView,
@@ -616,7 +628,8 @@ async function route() {
   nav.hidden = !ready;
   document.body.style.paddingBottom = ready ? "" : "0";
   for (const a of $$("[data-nav]", nav)) {
-    a.classList.toggle("active", a.dataset.nav === (name || "browse") || (name === "show" && a.dataset.nav === "search"));
+    a.classList.toggle("active", a.dataset.nav === (name || "browse") || (name === "show" && a.dataset.nav === "search")
+      || (name === "anime" && a.dataset.nav === "discover"));
   }
   requestAnimationFrame(moveNavIndicator);
   const lang = document.getElementById("langswitch");
@@ -748,7 +761,7 @@ function posterCard(m, k, { rank = 0 } = {}) {
   const sub = [m.format?.replace("_", " "), m.year, m.episodes && `${m.episodes} eps`].filter(Boolean).join(" · ");
   const score = m.rating ? `<span class="score" data-tip="${esc(ratingTip(m))}">${icon("star")}${(m.rating.combined / 10).toFixed(1)}</span>` : "";
   const dub = m.available?.dub ? `<span class="dubtag" data-tip="${esc(`An English dub is out: ${m.available.dub} episode${m.available.dub === 1 ? "" : "s"} so far`)}">Dub</span>` : "";
-  return `<a class="poster rise" style="--i:${k}" href="#/search?q=${encodeURIComponent(m.english || m.romaji || m.title)}" data-card="${m.id}">
+  return `<a class="poster rise" style="--i:${k}" href="#/anime?id=${m.id}" data-card="${m.id}">
       ${rank ? `<span class="rank" aria-hidden="true">${rank}</span>` : ""}
       <div class="art" data-bg="${esc(m.cover || "")}">${score}${dub}<span data-lib></span></div>
       <div class="name">${esc(showTitle(m))}</div>
@@ -788,6 +801,9 @@ async function browseView() {
     <section class="feature" id="feature"><div class="bg skel"></div></section>
     <form class="searchbar" id="quick">${icon("search", "lead")}
       <input type="search" id="q" placeholder="Search anime by English or Japanese name" enterkeyhint="search" aria-label="Search anime"></form>
+    <div class="section-head"><h2>Browse by genre</h2>
+      <button class="small" id="surprise">${icon("dice")}<span>Surprise me</span></button></div>
+    <div class="chips-row" id="genre-row">${'<span class="chip skel" style="width:84px">&nbsp;</span>'.repeat(8)}</div>
     <div class="section-head"><h2>Best this season</h2>${shelfNav("best")}</div>
     <p class="hint shelf-hint" id="best-sources"></p>
     <div class="shelf ranked" id="best">${skeletonPosters(6)}</div>
@@ -806,6 +822,11 @@ async function browseView() {
   for (const b of $$("[data-shelf]")) {
     b.addEventListener("click", () => { const shelf = $(`#${b.dataset.for}`); shelf.scrollBy({ left: Number(b.dataset.shelf) * shelf.clientWidth * .8, behavior: "smooth" }); });
   }
+  $("#surprise").addEventListener("click", (e) => surprise(e.currentTarget));
+  genreList().then((genres) => {
+    const row = $("#genre-row");
+    if (row) row.innerHTML = genres.map((g) => genreChip(g)).join("");
+  });
 
   const seq = routeSeq;
   const trending = browseList("/api/browse/trending"), seasonal = browseList("/api/browse/seasonal");
@@ -888,6 +909,223 @@ function browseList(path) {
 const SOURCE_LABEL = { anilist: "AniList", mal: "MyAnimeList", kitsu: "Kitsu", hianime: "hianime" };
 
 const shelfNav = (id) => `<div class="shelf-nav"><button class="small icon" data-shelf="-1" data-for="${id}" aria-label="Scroll left">${icon("back")}</button><button class="small icon" data-shelf="1" data-for="${id}" aria-label="Scroll right">${icon("arrow")}</button></div>`;
+
+// Genres, Surprise me, Discover and anime pages ----------------------------------------------
+
+// "More like this" under a show's download page
+async function moreLikeThis(id, name) {
+  const seq = routeSeq;
+  let a;
+  try { a = await api(`/api/anime/${id}`); } catch { return; }
+  const box = $("#similar-box");
+  if (seq !== routeSeq || !box || !a.similar.length) return;
+  box.innerHTML = `<div class="section-head" style="margin-top:1.5rem"><h2>More like this</h2>${shelfNav("similar")}</div>
+    <p class="hint shelf-hint">Recommended by people who liked ${esc(name)}.</p>
+    <div class="shelf" id="similar">${a.similar.map((m, k) => posterCard(m, k)).join("")}</div>`;
+  lazyImages($("#similar"), $("#similar"));
+  for (const b of $$("[data-shelf]", box)) {
+    b.addEventListener("click", () => { const shelf = $("#similar"); shelf.scrollBy({ left: Number(b.dataset.shelf) * shelf.clientWidth * .8, behavior: "smooth" }); });
+  }
+  markLibrary(box, a.similar);
+}
+
+let genresPromise = null;
+function genreList() {
+  genresPromise ||= api("/api/genres").then((d) => d.genres).catch(() => { genresPromise = null; return []; });
+  return genresPromise;
+}
+
+const genreChip = (g, on = false, tag = "a") => tag === "a"
+  ? `<a class="chip" href="#/discover?genre=${encodeURIComponent(g)}">${esc(g)}</a>`
+  : `<button type="button" class="chip ${on ? "on" : ""}" data-genre="${esc(g)}" aria-pressed="${on}">${esc(g)}</button>`;
+
+// A random anime (of these genres, if any) opens on its own page
+async function surprise(button, filters = {}) {
+  const query = new URLSearchParams(Object.entries(filters).filter(([, v]) => v)).toString();
+  try {
+    const pick = await busy(button, () => api(`/api/random${query ? `?${query}` : ""}`));
+    location.hash = `#/anime?id=${pick.id}&random=1${query ? `&${query}` : ""}`;
+  } catch (err) { toast(err.message, true); }
+}
+
+const SORT_LABEL = { popular: "Popular", rated: "Top rated", trending: "Trending", newest: "Newest" };
+const FORMAT_LABEL = { "": "Any type", tv: "TV series", movie: "Movies", ona: "ONA, OVA & specials" };
+const STATUS_LABEL = { "": "Any status", airing: "Airing now", finished: "Finished", upcoming: "Coming soon" };
+
+async function discoverView() {
+  const p = params();
+  const state = {
+    genre: (p.genre || "").split(",").filter(Boolean), sort: SORT_LABEL[p.sort] ? p.sort : "popular",
+    format: FORMAT_LABEL[p.format] ? p.format : "", status: STATUS_LABEL[p.status] ? p.status : "", year: p.year || "",
+  };
+  const thisYear = new Date().getFullYear();
+  view.innerHTML = `
+    <div class="section-head"><h1>Discover</h1>
+      <button class="primary small" id="surprise">${icon("dice")}<span>Surprise me</span></button></div>
+    <p class="hint" style="margin-top:-.5rem">Pick genres to narrow it down. Shows must have every genre you pick.</p>
+    <div class="chips-row wrap" id="genres">${'<span class="chip skel" style="width:84px">&nbsp;</span>'.repeat(12)}</div>
+    <div class="discover-filters">
+      <div class="segmented" role="group" aria-label="Sort">${Object.entries(SORT_LABEL).map(([k, v]) =>
+        `<button type="button" data-sort="${k}" class="${state.sort === k ? "on" : ""}">${v}</button>`).join("")}</div>
+      <select id="f-format" aria-label="Type">${Object.entries(FORMAT_LABEL).map(([k, v]) => `<option value="${k}" ${state.format === k ? "selected" : ""}>${v}</option>`).join("")}</select>
+      <select id="f-status" aria-label="Status">${Object.entries(STATUS_LABEL).map(([k, v]) => `<option value="${k}" ${state.status === k ? "selected" : ""}>${v}</option>`).join("")}</select>
+      <select id="f-year" aria-label="Year"><option value="">Any year</option>${Array.from({ length: thisYear + 2 - 1970 }, (_, i) => thisYear + 1 - i)
+        .map((y) => `<option value="${y}" ${String(y) === state.year ? "selected" : ""}>${y}</option>`).join("")}</select>
+    </div>
+    <div class="posters" id="results">${skeletonPosters(12)}</div>
+    <div id="more"></div>`;
+
+  const seq = routeSeq;
+  let page = 0, loading = false, done = false, observer = null;
+  const filters = () => ({ genre: state.genre.join(","), format: state.format, status: state.status });
+  const load = async (fresh) => {
+    if (loading || (done && !fresh)) return;
+    loading = true;
+    if (fresh) { page = 0; done = false; $("#results").innerHTML = skeletonPosters(12); }
+    const query = new URLSearchParams({ ...filters(), sort: state.sort, year: state.year, page: page + 1 });
+    for (const [k, v] of [...query]) if (!v) query.delete(k);
+    try {
+      const data = await api(`/api/discover?${query}`);
+      if (seq !== routeSeq) return;
+      const grid = $("#results");
+      if (fresh || page === 0) grid.innerHTML = "";
+      if (!data.items.length && page === 0) {
+        grid.innerHTML = `<p class="muted">${esc(data.error || "Nothing matches. Try fewer genres or another year.")}</p>`;
+      }
+      const chunk = document.createElement("div");
+      chunk.innerHTML = data.items.map((m, k) => posterCard(m, k)).join("");
+      const cards = [...chunk.children];
+      grid.append(...cards);
+      lazyImages(grid);
+      markLibrary(grid, data.items);
+      page += 1;
+      done = !data.has_next;
+      $("#more").innerHTML = done ? "" : `<button class="block" id="load-more">Show more</button>`;
+      $("#load-more")?.addEventListener("click", () => load(false));
+      if (!done && "IntersectionObserver" in window) {
+        observer?.disconnect();
+        observer = new IntersectionObserver(([e]) => { if (e.isIntersecting) load(false); }, { rootMargin: "800px 0px" });
+        observer.observe($("#more"));
+      }
+    } catch (e) {
+      if ($("#results")) $("#results").innerHTML = `<div class="error-box">${esc(e.message)}</div>`;
+    } finally { loading = false; }
+  };
+  // Filters change the results in place and the address (so Back and sharing work), without a page reload
+  const apply = () => {
+    const query = new URLSearchParams({ genre: state.genre.join(","), sort: state.sort === "popular" ? "" : state.sort,
+      format: state.format, status: state.status, year: state.year });
+    for (const [k, v] of [...query]) if (!v) query.delete(k);
+    history.replaceState(null, "", `#/discover${query.toString() ? `?${query}` : ""}`);
+    load(true);
+  };
+
+  genreList().then((genres) => {
+    const row = $("#genres");
+    if (!row) return;
+    row.innerHTML = genres.map((g) => genreChip(g, state.genre.includes(g), "button")).join("");
+    row.addEventListener("click", (e) => {
+      const chip = e.target.closest("[data-genre]");
+      if (!chip) return;
+      const g = chip.dataset.genre;
+      state.genre = state.genre.includes(g) ? state.genre.filter((x) => x !== g) : [...state.genre, g];
+      chip.classList.toggle("on");
+      chip.setAttribute("aria-pressed", chip.classList.contains("on"));
+      apply();
+    });
+  });
+  for (const b of $$("[data-sort]")) {
+    b.addEventListener("click", () => {
+      state.sort = b.dataset.sort;
+      for (const x of $$("[data-sort]")) x.classList.toggle("on", x === b);
+      apply();
+    });
+  }
+  for (const [id, key] of [["#f-format", "format"], ["#f-status", "status"], ["#f-year", "year"]]) {
+    $(id).addEventListener("change", (e) => { state[key] = e.target.value; apply(); });
+  }
+  $("#surprise").addEventListener("click", (e) => surprise(e.currentTarget, filters()));
+  load(true);
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const STATUS_TEXT = { RELEASING: "Airing now", FINISHED: "Finished", NOT_YET_RELEASED: "Coming soon", HIATUS: "On hiatus", CANCELLED: "Cancelled" };
+
+// One anime's page: what it is, where it fits, and more like it. "Find episodes" leads to downloading.
+async function animeView() {
+  const p = params();
+  view.innerHTML = `
+    <div class="show-hero"><div class="backdrop skel"></div>
+      <div class="hero"><div class="art skel"></div>
+        <div><div class="skel skel-line" style="height:2rem;width:70%"></div><div class="skel skel-line" style="width:40%"></div></div></div></div>`;
+  let a;
+  try { a = await api(`/api/anime/${encodeURIComponent(p.id)}`); }
+  catch (e) {
+    view.innerHTML = `<div class="error-box">${esc(e.message)}</div><a class="btn" href="#/discover">Back to Discover</a>`;
+    return;
+  }
+  const searchName = a.english || a.romaji || a.title;
+  const started = a.start?.[0] ? [a.start[1] && MONTHS[a.start[1] - 1], a.start[0]].filter(Boolean).join(" ") : "";
+  const facts = [
+    ["Type", a.format?.replace("_", " ")],
+    ["Episodes", a.episodes ? `${a.episodes}${a.duration ? ` × ${a.duration} min` : ""}` : a.duration ? `${a.duration} min` : ""],
+    ["Status", STATUS_TEXT[a.status] || ""],
+    ["Started", started],
+    ["Studio", a.studio],
+    ["Next episode", a.next_episode ? `Episode ${a.next_episode.episode} ${relTime(a.next_episode.airingAt)}` : ""],
+  ].filter(([, v]) => v);
+  const random = p.random === "1";
+  const again = { genre: p.genre || "", format: p.format || "", status: p.status || "" };
+  view.innerHTML = `
+    <div class="show-hero">
+      <div class="backdrop ${a.banner ? "" : "blur"}" style="background-image:url(${esc(JSON.stringify(a.banner || a.cover || ""))})"></div>
+      <button type="button" class="btn small back" id="back">${icon("back")}Back</button>
+      <div class="hero">
+        <div class="art" style="background-image:url(${esc(JSON.stringify(a.cover || ""))})"></div>
+        <div class="hero-text">
+          ${random ? `<span class="eyebrow">${icon("dice")} Surprise pick</span>` : ""}
+          <h1>${esc(showTitle(a))}</h1>
+          <div class="muted small">${esc([titleLang() === "ja" ? a.english : a.romaji, a.native].filter((x) => x && x !== showTitle(a)).join(" · "))}</div>
+          <div class="row" style="margin:.5rem 0 .2rem;gap:.5rem">
+            ${a.score ? `<span class="score-big" data-tip="Average fan score on AniList">${icon("star")}${(a.score / 10).toFixed(1)}</span>` : ""}
+            ${a.popularity ? `<span class="muted small">${a.popularity.toLocaleString()} people follow it on AniList</span>` : ""}
+          </div>
+          <div class="genres">${(a.genres || []).map((g) => genreChip(g)).join("")}</div>
+          <div id="inlib"></div>
+        </div>
+      </div>
+    </div>
+    <div class="row" style="margin-bottom:1rem">
+      <a class="btn primary" id="find" href="#/search?q=${encodeURIComponent(searchName)}">${icon("download")}Find episodes</a>
+      ${random ? `<button class="small" id="again">${icon("dice")}<span>Another surprise</span></button>` : ""}
+    </div>
+    ${a.description ? `<p class="synopsis clamp" id="syn">${esc(a.description.replace(/<[^>]+>/g, ""))}</p>` : ""}
+    ${facts.length ? `<div class="facts">${facts.map(([k, v]) => `<div><span class="muted small">${k}</span><b>${esc(v)}</b></div>`).join("")}</div>` : ""}
+    ${a.tags?.length ? `<div class="genres tags">${a.tags.map((t) => `<span class="pill">${esc(t)}</span>`).join("")}</div>` : ""}
+    ${a.relations.length ? `<div class="section-head"><h2>Same story</h2>${shelfNav("related")}</div>
+      <div class="shelf" id="related">${a.relations.map((m, k) => posterCard({ ...m, reason: m.relation }, k)).join("")}</div>` : ""}
+    <div class="section-head"><h2>More like this</h2>${a.similar.length ? shelfNav("similar") : ""}</div>
+    ${a.similar.length
+      ? `<p class="hint shelf-hint">Recommended by people who liked ${esc(showTitle(a))}.</p>
+         <div class="shelf" id="similar">${a.similar.map((m, k) => posterCard(m, k)).join("")}</div>`
+      : `<p class="muted">No recommendations yet. <a href="#/discover?genre=${encodeURIComponent((a.genres || [])[0] || "")}">Browse ${esc((a.genres || [])[0] || "similar")} anime</a> instead.</p>`}`;
+
+  $("#back").addEventListener("click", () => (history.length > 1 ? history.back() : (location.hash = "#/")));
+  $("#syn")?.addEventListener("click", (e) => e.target.classList.toggle("clamp"));
+  $("#again")?.addEventListener("click", (e) => surprise(e.currentTarget, again));
+  for (const id of ["related", "similar"]) if ($(`#${id}`)) lazyImages($(`#${id}`), $(`#${id}`));
+  for (const b of $$("[data-shelf]")) {
+    b.addEventListener("click", () => { const shelf = $(`#${b.dataset.for}`); shelf.scrollBy({ left: Number(b.dataset.shelf) * shelf.clientWidth * .8, behavior: "smooth" }); });
+  }
+  markLibrary(view, [...a.relations, ...a.similar]);
+  libraryMatch([{ id: "me", titles: [a.english, a.romaji, ...(a.names || [])] }]).then((matches) => {
+    const m = matches.me;
+    if (!m || !$("#inlib")) return;
+    const { seasons: have, where } = librarySummary(m);
+    $("#inlib").innerHTML = `<div class="libbox">${icon("check")}<div><b>In your library</b>${where ? ` <span class="muted">${esc(where)}</span>` : ""}
+      ${have ? `<div class="small">${esc(have)}</div>` : ""}</div></div>`;
+  });
+}
 
 // Search -------------------------------------------------------------------------------
 
@@ -1120,7 +1358,9 @@ async function showView() {
       <div class="row">${can.download() ? `<button class="small" id="follow">${icon("star")}<span>Follow</span></button>` : ""}<button class="small" id="all-seasons">Select all seasons</button></div></div>
     <div class="tabs" id="tabs" role="tablist"></div>
     <div id="season"></div>
+    <div id="similar-box"></div>
     <div class="pad-actionbar"></div>`;
+  if (meta?.id) moreLikeThis(meta.id, heading);
 
   $("#syn")?.addEventListener("click", (e) => e.target.classList.toggle("clamp"));
   for (const b of $$("[data-mode]")) {
@@ -2181,19 +2421,42 @@ async function settingsView() {
   }
   view.innerHTML = loading();
   const [s, sys] = await Promise.all([api("/api/settings"), api("/api/system")]);
+  // Most used first: updates, download defaults and your account, then the one-time setup
+  const updateState = sys.update_available
+    ? `Version ${esc(sys.latest)} is ready to install.`
+    : sys.latest ? "You're on the newest version." : "Couldn't reach GitHub to check for a new version.";
   view.innerHTML = `
     <h1>Settings</h1>
-    <div class="card"><h2>Download locations</h2><div id="locs"></div></div>
+    <div class="card update-card ${sys.update_available ? "has-update" : ""}" id="updates">
+      <div class="update-head">
+        <div class="grow">
+          <h2>AniStash v${esc(status.version)}</h2>
+          <p class="muted" style="margin:0">${updateState}</p>
+        </div>
+        <div class="row">
+          ${sys.update_available ? `<button class="primary" id="update-app" ${sys.helper ? "" : "disabled"}>${icon("download")}Update to ${esc(sys.latest)}</button>` : ""}
+          <button class="${sys.update_available ? "" : "primary"}" id="check-updates">${icon("retry")}Check for updates</button>
+        </div>
+      </div>
+      ${sys.update_available ? `<a class="small" href="https://github.com/JustinMarxGit/anistash/releases" target="_blank" rel="noopener">What's new in ${esc(sys.latest)}</a>` : ""}
+      <label class="check" style="margin-top:.75rem"><input type="checkbox" id="auto-update" ${s.auto_update ? "checked" : ""} ${sys.helper ? "" : "disabled"}>
+        Install updates automatically</label>
+      <p class="hint" style="margin-top:0">Checks every 30 minutes and installs a new version while nothing is downloading. If an update fails, the previous version is put back. When this is off, admins see a banner instead.</p>
+    </div>
 
     <form class="card" id="defaults"><h2>Downloads</h2>${defaultsForm(s)}
       <div class="row end"><button class="primary" type="submit">Save</button></div></form>
 
-    <div class="card"><h2>Users</h2>
-      <p class="muted small">Admins manage everything. Members can browse and download. Viewers can only browse.</p>
-      <div id="users"></div></div>
+    ${accountCard()}
+
+    <div class="card"><h2>Download locations</h2><div id="locs"></div></div>
 
     <form class="card" id="ms"><h2>Media server</h2>${mediaServerForm(s)}
       <div class="row end"><button type="button" id="ms-test">Test</button><button class="primary" type="submit">Save</button></div></form>
+
+    <div class="card"><h2>Users</h2>
+      <p class="muted small">Admins manage everything. Members can browse and download. Viewers can only browse.</p>
+      <div id="users"></div></div>
 
     <form class="card" id="mal"><h2>Ratings</h2>
       <p class="muted small">Best this season combines fan ratings from MyAnimeList, AniList and Kitsu with what's popular on hianime.</p>
@@ -2205,30 +2468,20 @@ async function settingsView() {
       <div class="row end">${s.mal_client_id_set ? `<button type="button" class="small" id="mal-clear">Remove</button>` : ""}
         <button class="primary" type="submit">Save</button></div></form>
 
-    ${accountCard()}
-
-    <div class="card"><h2>Security log</h2>
-      <p class="muted small">Logins, failed attempts and changes to users and settings.</p>
-      <div id="audit"></div></div>
-
-    <div class="card"><h2>System</h2>
+    <div class="card"><h2>Tools</h2>
       <div class="checks">
         <div><span>ani-cli</span><span>${esc(sys.ani_cli || "not found")}</span></div>
         <div><span>yt-dlp</span><span>${esc(sys.yt_dlp || "not found")}</span></div>
         <div><span>ffmpeg</span><span>${esc(sys.ffmpeg || "not found")}</span></div>
-        <div><span>AniStash</span><span>v${esc(status.version)}${sys.latest ? ` · newest release ${esc(sys.latest)}` : ""}</span></div>
       </div>
-      ${sys.update_available ? `<div class="ok-box">AniStash ${esc(sys.latest)} is available.
-        <div class="row" style="margin-top:.5rem"><button class="primary small" id="update-app" ${sys.helper ? "" : "disabled"}>Update AniStash</button>
-        <a class="small" href="https://github.com/JustinMarxGit/anistash/releases" target="_blank" rel="noopener">What's new</a></div></div>` : ""}
-      ${sys.update_available ? "" : `<div class="row" style="margin:.75rem 0"><button class="small" id="check-updates">Check for updates</button></div>`}
       <p class="muted small">If searches or downloads start failing, the anime site probably changed. Updating ani-cli usually fixes it. Tools also update weekly on their own.</p>
-      <label class="check"><input type="checkbox" id="auto-update" ${s.auto_update ? "checked" : ""} ${sys.helper ? "" : "disabled"}>
-        Install AniStash updates automatically</label>
-      <p class="hint" style="margin-top:0">Checks for a new version every 30 minutes and installs it while nothing is downloading. If an update fails, the previous version is put back. When this is off, admins see a banner instead.</p>
       <button id="update-tools" ${sys.helper ? "" : "disabled"}>Update ani-cli and yt-dlp</button>
       <pre id="update-out" class="small muted" style="white-space:pre-wrap" hidden></pre>
     </div>
+
+    <div class="card"><h2>Security log</h2>
+      <p class="muted small">Logins, failed attempts and changes to users and settings.</p>
+      <div id="audit"></div></div>
 
     <div class="card"><h2>Setup</h2>
       <p class="muted">Walk through the setup wizard again. Your locations, settings and queue are kept.</p>

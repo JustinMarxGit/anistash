@@ -5,6 +5,19 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "0.10.0",
+        "title": "Discover anime",
+        "items": [
+            "New Discover tab: browse every anime by genre (pick several to combine them), sort by popular, top rated, "
+            "trending or newest, and narrow by type, status and year. It keeps loading as you scroll.",
+            "Surprise me opens a random, well-liked anime, keeping to the genres you picked.",
+            "Tap any poster for the anime's own page: what it's about, where it fits in its story, and More like this. "
+            "Find episodes takes you on to downloading.",
+            "Show pages also suggest More like this, and Browse has genre shortcuts.",
+            "Settings now starts with updates (Check for updates is right at the top) and lists the most used settings first.",
+        ],
+    },
+    {
         "version": "0.9.1",
         "title": "Picked for you learns from what you watch",
         "items": [

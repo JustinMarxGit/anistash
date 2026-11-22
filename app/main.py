@@ -547,6 +547,52 @@ async def recommend_for_you(user=VIEWER):
     return await recommend.for_you(user)
 
 
+@app.get("/api/genres")
+async def genre_list(user=VIEWER):
+    try:
+        return {"genres": await anilist.genres()}
+    except Exception as exc:
+        log.warning("AniList genres failed: %s", exc)
+        return {"genres": [], "error": "Couldn't reach AniList."}
+
+
+@app.get("/api/discover")
+async def discover(genre: str = "", sort: str = "popular", format: str = "", status: str = "", year: int | None = None,
+                   page: int = 1, user=VIEWER):
+    """Anime by genre (comma separated, all must match), sorted and filtered, 30 per page."""
+    try:
+        return await anilist.discover([g for g in genre.split(",") if g], sort, format, status, year, page)
+    except Exception as exc:
+        log.warning("AniList discover failed: %s", exc)
+        return {"items": [], "has_next": False, "error": "Couldn't reach AniList."}
+
+
+@app.get("/api/random")
+async def random_anime(genre: str = "", format: str = "", status: str = "", user=VIEWER):
+    """A random anime (well known enough to be worth a look), optionally of these genres."""
+    try:
+        pick = await anilist.random_pick([g for g in genre.split(",") if g], format, status)
+    except Exception as exc:
+        log.warning("AniList random failed: %s", exc)
+        raise HTTPException(502, "Couldn't reach AniList. Try again in a moment.")
+    if not pick:
+        raise HTTPException(404, "Nothing matches those filters.")
+    return pick
+
+
+@app.get("/api/anime/{media_id}")
+async def anime_details(media_id: int, user=VIEWER):
+    """One anime's page: details, related entries and 'more like this'."""
+    try:
+        info = await anilist.details(media_id)
+    except Exception as exc:
+        log.warning("AniList details failed: %s", exc)
+        raise HTTPException(502, "Couldn't reach AniList. Try again in a moment.")
+    if not info:
+        raise HTTPException(404, "That anime doesn't exist on AniList.")
+    return info
+
+
 @app.get("/api/mediaserver/accounts")
 async def media_accounts(user=VIEWER):
     """The media server's accounts, for linking watch history, and which one is linked to you."""
