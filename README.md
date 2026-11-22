@@ -20,9 +20,13 @@ It runs in its own Proxmox LXC, created with one command, and works on phones as
   <img src="docs/screenshots/browse-phone.jpg" alt="Browse on a phone" width="22%">
 </p>
 
-| Discover by genre | An anime's page | Picking episodes | Downloads |
-| --- | --- | --- | --- |
-| ![Discover](docs/screenshots/discover.jpg) | ![Anime page](docs/screenshots/anime-page.jpg) | ![Show page](docs/screenshots/show-page.jpg) | ![Downloads](docs/screenshots/downloads.jpg) |
+| Discover by genre | An anime's page | Picking episodes |
+| --- | --- | --- |
+| ![Discover](docs/screenshots/discover.jpg) | ![Anime page](docs/screenshots/anime-page.jpg) | ![Show page](docs/screenshots/show-page.jpg) |
+
+| Downloads | Settings: your own colours | Settings on a phone |
+| --- | --- | --- |
+| ![Downloads](docs/screenshots/downloads.jpg) | ![Appearance settings](docs/screenshots/settings-desktop.jpg) | ![Settings on a phone](docs/screenshots/settings-phone.jpg) |
 
 **Contents:** [Features](#features) · [Requirements](#requirements) · [Install](#install) · [Setup](#setup) ·
 [Discover](#discover) · [Recommendations](#recommendations) · [Following shows](#following-shows) ·
@@ -54,6 +58,10 @@ It runs in its own Proxmox LXC, created with one command, and works on phones as
 - **Download locations:** SMB or NFS shares, or local folders, added and tested from the web UI.
 - **Multi-user:** admin, member and viewer roles, with careful security (see below).
 - **Updates from the web page:** one click (or automatically), with live progress and automatic rollback.
+- **Your look:** a light/dark switch at the top, and under Settings → Appearance a choice of colour schemes or any
+  colour you like. Each person's choice is their own and follows them to every device.
+- **Settings that are easy to find:** grouped into sections (Updates, Appearance, Downloads, Storage, Media server,
+  Users…), a sidebar on desktop and a simple list on phones.
 - **Explains itself:** every button has a plain-language tooltip, and new users get a short guided tour.
 
 ## Requirements
@@ -103,7 +111,7 @@ The installer only sets up the container. Open `http://<container-ip>:8000` and 
 4. Jellyfin or Plex (optional): URL, API key or token, and the **anime library** to scan
 5. Download defaults: sub/dub, maximum quality, downloads at once, naming
 
-You can rerun it later from Settings → Setup. For the same steps in a terminal, run `anistash-setup` in the container's console.
+You can rerun it later from Settings → Tools & logs → *Run setup again*. For the same steps in a terminal, run `anistash-setup` in the container's console.
 
 ### Jellyfin and Plex scans
 
@@ -177,7 +185,7 @@ How it's protected:
 - **Cross-site requests** are rejected (custom request header + origin check), and every page sends a strict Content-Security-Policy, `X-Frame-Options: DENY`, `nosniff` and `no-referrer`.
 - **Access control** is enforced by the server on every request, not just hidden in the UI.
 - **Secrets at rest**: the Jellyfin/Plex token is encrypted (Fernet: AES + HMAC) with a key in `/etc/anistash/secret.key` that only the service can read. NAS passwords live in root-only (`0600`) credential files, never in the database, because the kernel's SMB mount needs to read them. The database itself is readable only by the service.
-- **Security log**: logins, failed attempts, lockouts and changes to users and settings, under Settings → Security log.
+- **Security log**: logins, failed attempts, lockouts and changes to users and settings, under Settings → Tools & logs.
 
 Locked out? In the container console, run `anistash-setup --reset-password`. It sets a new password and lifts the lockout.
 
@@ -186,7 +194,7 @@ For access from outside your home network, put AniStash behind a reverse proxy w
 ## Updates
 
 - **Automatic** (Settings → Updates, the setup wizard, or `anistash-setup`): AniStash checks GitHub for a new release every 30 minutes. It installs it only while nothing is downloading. If the new version doesn't start, the previous one is put back, and that version isn't retried for 12 hours.
-- **From the web UI**: admins get *Update now* in the banner that appears when a new version is out, and the **Updates** card at the top of Settings, whose *Check for updates* asks GitHub straight away instead of waiting for the next check.
+- **From the web UI**: admins get *Update now* in the banner that appears when a new version is out, and **Settings → Updates** (first in the list), whose *Check for updates* asks GitHub straight away instead of waiting for the next check.
   - Either button runs `anistash-update` and shows each step as it happens: download, install, restart.
   - When the new version is up, the page reloads by itself.
   - If the update fails, the window says why; the previous version has already been put back.
@@ -237,11 +245,11 @@ Settings, locations and the queue survive updates. The web UI port is set in `/e
 
 ## Troubleshooting
 
-- **Searches fail or return nothing**: the anime site probably changed. Click Settings → Tools → *Update ani-cli and yt-dlp*. This also runs weekly on its own.
+- **Searches fail or return nothing**: the anime site probably changed. Click Settings → Tools & logs → *Update ani-cli and yt-dlp*. This also runs weekly on its own.
 - **A location shows "Not mounted"**: click *Test*, which remounts it and shows the error from the NAS. Check that the share allows the user you entered to write.
 - **A download shows "scan failed"**: the file is downloaded fine; only the Jellyfin/Plex notification failed. Check the URL, key or token and the chosen library under Settings → Media server.
 - **A Sub + Dub episode only has Japanese audio**: when the dub can't be added (not uploaded yet, a different length, or the site serving the Japanese audio again), the episode is still saved with Japanese audio, and the queue says why.
-- **A dub download has Japanese audio**: AniStash asks ani-cli for the dub correctly (`--dub`), but with ani-cli 5.1.5 its current anime site sometimes hands back the sub stream for dubs. Run *Update ani-cli and yt-dlp* under Settings → Tools; once ani-cli fixes it upstream, dubs come through without any change in AniStash.
+- **A dub download has Japanese audio**: AniStash asks ani-cli for the dub correctly (`--dub`), but with ani-cli 5.1.5 its current anime site sometimes hands back the sub stream for dubs. Run *Update ani-cli and yt-dlp* under Settings → Tools & logs; once ani-cli fixes it upstream, dubs come through without any change in AniStash.
 
 ## Development
 

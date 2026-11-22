@@ -63,6 +63,31 @@ def test_search_still_works_when_anilist_is_down(isolated, monkeypatch):
 def test_title_language_is_per_person(isolated):
     c = _site(isolated)
     assert c.get("/api/status").json()["user"]["title_lang"] == "en"
-    assert c.put("/api/account/preferences", json={"title_lang": "ja"}).json() == {"title_lang": "ja"}
+    assert c.put("/api/account/preferences", json={"title_lang": "ja"}).json()["title_lang"] == "ja"
     assert c.get("/api/status").json()["user"]["title_lang"] == "ja"
     assert c.put("/api/account/preferences", json={"title_lang": "fr"}).status_code == 400
+
+
+def test_theme_and_colour_are_per_person(isolated):
+    from app import auth, db, locations
+    import asyncio
+    asyncio.run(locations.create({"name": "Media", "type": "local", "path": str(isolated)}))
+    db.set_settings(setup_complete=True)
+    auth.create_user("aiko", "correct horse battery", "admin")
+    auth.create_user("ben", "just visiting here", "viewer")
+
+    def login(name, pw):
+        c = TestClient(main.app, headers=HEADERS)
+        assert c.post("/api/login", json={"username": name, "password": pw}).status_code == 200
+        return c
+
+    aiko, ben = login("aiko", "correct horse battery"), login("ben", "just visiting here")
+    me = aiko.get("/api/status").json()["user"]
+    assert me["theme_mode"] == "system" and me["accent"] == ""  # AniStash's own look until changed
+    assert aiko.put("/api/account/preferences", json={"theme_mode": "dark", "accent": "#3F9B5A"}).json() == {
+        "title_lang": "en", "theme_mode": "dark", "accent": "#3f9b5a"}
+    assert ben.put("/api/account/preferences", json={"theme_mode": "light"}).status_code == 200  # viewers too
+    assert ben.get("/api/status").json()["user"]["accent"] == ""  # someone else's choice doesn't leak
+    assert aiko.put("/api/account/preferences", json={"theme_mode": "neon"}).status_code == 400
+    assert aiko.put("/api/account/preferences", json={"accent": "red; x"}).status_code == 400
+    assert aiko.put("/api/account/preferences", json={"accent": ""}).json()["accent"] == ""

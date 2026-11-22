@@ -5,6 +5,17 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "1.1.0",
+        "title": "Your colours, and a tidier Settings",
+        "items": [
+            "Switch between light and dark with the new button at the top, or let AniStash follow your device.",
+            "Settings → Appearance: pick a colour scheme (Sakura, Matcha, Ocean, Violet and more) or any colour you "
+            "like. It's yours alone and follows you to every device.",
+            "Settings is now split into sections instead of one long page: a sidebar on a computer, a simple list "
+            "you tap into on a phone.",
+        ],
+    },
+    {
         "version": "1.0.0",
         "title": "AniStash 1.0",
         "items": [

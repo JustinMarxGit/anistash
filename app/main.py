@@ -8,6 +8,7 @@ security headers to every response.
 
 import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
@@ -202,7 +203,7 @@ def _me(user) -> dict | None:
         return None
     return {"id": user["id"], "username": user["username"], "role": user["role"],
             "must_change_password": bool(user["must_change_password"]), "tour_done": bool(user["tour_done"]),
-            "title_lang": user["title_lang"],
+            "title_lang": user["title_lang"], "theme_mode": user["theme_mode"], "accent": user["accent"],
             "whats_new": bool(changelog.since(user["last_seen_version"], config.VERSION))}
 
 
@@ -298,11 +299,28 @@ async def whats_new_seen(user=VIEWER):
 
 
 @app.put("/api/account/preferences")
-async def preferences(title_lang: str = Body(..., embed=True), user=VIEWER):
-    if title_lang not in ("en", "ja"):
-        raise HTTPException(400, "Title language must be en (English) or ja (Japanese).")
-    db.execute("UPDATE users SET title_lang = ? WHERE id = ?", (title_lang, user["id"]))
-    return {"title_lang": title_lang}
+async def preferences(title_lang: str | None = Body(None), theme_mode: str | None = Body(None),
+                      accent: str | None = Body(None), user=VIEWER):
+    """Per-person look: title language, light/dark (or follow the device) and accent colour."""
+    changes = {}
+    if title_lang is not None:
+        if title_lang not in ("en", "ja"):
+            raise HTTPException(400, "Title language must be en (English) or ja (Japanese).")
+        changes["title_lang"] = title_lang
+    if theme_mode is not None:
+        if theme_mode not in ("system", "light", "dark"):
+            raise HTTPException(400, "Theme must be system, light or dark.")
+        changes["theme_mode"] = theme_mode
+    if accent is not None:
+        accent = accent.strip().lower()
+        if accent and not re.fullmatch(r"#[0-9a-f]{6}", accent):
+            raise HTTPException(400, "The colour must look like #3f9b5a.")
+        changes["accent"] = accent
+    if changes:
+        cols = ", ".join(f"{k} = ?" for k in changes)
+        db.execute(f"UPDATE users SET {cols} WHERE id = ?", (*changes.values(), user["id"]))
+    row = auth.get_user(user["id"])
+    return {"title_lang": row["title_lang"], "theme_mode": row["theme_mode"], "accent": row["accent"]}
 
 
 @app.post("/api/account/tour")

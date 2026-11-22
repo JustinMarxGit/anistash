@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS users (
     tour_done            INTEGER NOT NULL DEFAULT 0,
     title_lang           TEXT NOT NULL DEFAULT 'en', -- 'en' English titles, 'ja' Japanese (romaji)
     media_user_id        TEXT NOT NULL DEFAULT '',   -- their Jellyfin/Plex account, '-' = don't use, '' = match by name
-    media_user_name      TEXT NOT NULL DEFAULT ''
+    media_user_name      TEXT NOT NULL DEFAULT '',
+    theme_mode           TEXT NOT NULL DEFAULT 'system', -- 'system' (follow the device), 'light' or 'dark'
+    accent               TEXT NOT NULL DEFAULT ''        -- '#rrggbb' accent colour; '' = AniStash vermilion
 );
 
 -- Only a SHA-256 of each session token is stored, so a copy of the database can't log anyone in
@@ -226,6 +228,8 @@ MIGRATIONS = [
     ("users", "tour_done", "INTEGER NOT NULL DEFAULT 1"),
     ("users", "media_user_id", "TEXT NOT NULL DEFAULT ''"),
     ("users", "media_user_name", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "theme_mode", "TEXT NOT NULL DEFAULT 'system'"),
+    ("users", "accent", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 

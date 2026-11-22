@@ -112,6 +112,85 @@ function libraryBadge(m) {
 
 const icon = (name, cls = "") => `<svg class="i ${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
+// Light / dark and accent colour --------------------------------------------------------------
+// Each person's own: saved with their account (so it follows them to other devices) and in this
+// browser too, so the page doesn't flash the wrong colours while it loads.
+
+const ACCENTS = [
+  ["", "Vermilion"], ["#e05a8a", "Sakura"], ["#3f9b5a", "Matcha"], ["#2f7fd8", "Ocean"],
+  ["#7c5cff", "Violet"], ["#d99a00", "Amber"], ["#13a3a3", "Teal"], ["#6b7280", "Ink"],
+];
+const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+let theme = { mode: "system", accent: "" };
+try { Object.assign(theme, JSON.parse(localStorage.getItem("anistash-theme") || "{}")); } catch { /* storage blocked */ }
+
+const hexToRgb = (h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+const rgbToHex = (c) => "#" + c.map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("");
+const mixRgb = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+function luminance(c) {
+  const [r, g, b] = c.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+function contrast(a, b) {
+  const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+}
+// Any colour stays readable: nudged darker on light pages and lighter on dark ones until text in
+// it stands out from the background (WCAG 3:1, the level for large text and controls)
+function readableAccent(hex, dark) {
+  const bg = dark ? [22, 24, 30] : [255, 253, 249];
+  let c = hexToRgb(hex);
+  for (let i = 0; i < 14 && contrast(c, bg) < 3; i++) c = mixRgb(c, dark ? [255, 255, 255] : [0, 0, 0], 0.12);
+  return c;
+}
+const isDark = () => theme.mode === "dark" || (theme.mode !== "light" && darkQuery.matches);
+
+function applyTheme(next = {}, { fade = false } = {}) {
+  theme = { ...theme, ...next };
+  const root = document.documentElement;
+  if (fade && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    root.classList.add("theme-fade");
+    clearTimeout(applyTheme.timer);
+    applyTheme.timer = setTimeout(() => root.classList.remove("theme-fade"), 450);
+  }
+  if (theme.mode === "light" || theme.mode === "dark") root.dataset.theme = theme.mode;
+  else delete root.dataset.theme;
+  const dark = isDark();
+  if (theme.accent) {
+    const c = readableAccent(theme.accent, dark);
+    const white = [255, 255, 255];
+    root.style.setProperty("--accent", rgbToHex(c));
+    root.style.setProperty("--accent-hover", rgbToHex(mixRgb(c, dark ? white : [0, 0, 0], 0.14)));
+    root.style.setProperty("--accent-soft", `rgb(${c.map(Math.round).join(" ")} / ${dark ? 14 : 11}%)`);
+    // White text like AniStash's own buttons, unless the colour is too light for it
+    root.style.setProperty("--accent-text", contrast(c, white) >= 3 ? "#fff" : "#16130f");
+  } else {
+    for (const v of ["--accent", "--accent-hover", "--accent-soft", "--accent-text"]) root.style.removeProperty(v);
+  }
+  for (const m of document.querySelectorAll('meta[name="theme-color"]')) m.content = dark ? "#0d0e12" : "#f5f2ec";
+  const toggle = document.getElementById("theme-toggle");
+  if (toggle) {
+    toggle.innerHTML = icon(dark ? "sun" : "moon");
+    toggle.setAttribute("aria-label", dark ? "Switch to light mode" : "Switch to dark mode");
+    toggle.dataset.tip = dark ? "Switch to light mode" : "Switch to dark mode";
+  }
+  try { localStorage.setItem("anistash-theme", JSON.stringify(theme)); } catch { /* storage blocked */ }
+}
+
+// Saves a change for this person (and shows it straight away)
+async function saveTheme(next) {
+  applyTheme(next, { fade: true });
+  if (!status?.user) return;
+  try {
+    await api("/api/account/preferences", { method: "PUT", body: { theme_mode: theme.mode, accent: theme.accent } });
+    Object.assign(status.user, { theme_mode: theme.mode, accent: theme.accent });
+  } catch (err) { toast(err.message, true); }
+}
+
+applyTheme();
+darkQuery.addEventListener("change", () => applyTheme({}, { fade: true }));
+document.getElementById("theme-toggle").addEventListener("click", () => saveTheme({ mode: isDark() ? "light" : "dark" }));
+
 function skeletonPosters(n) {
   return Array.from({ length: n }, (_, k) => `<div class="poster" style="--i:${k}"><div class="art skel"></div><div class="skel skel-line"></div><div class="skel skel-line" style="width:60%"></div></div>`).join("");
 }
@@ -341,6 +420,11 @@ const TIPS = [
   ['[data-sort="rated"]', "Best scored by fans first"],
   ['[data-sort="newest"]', "Most recently started first"],
   ['#find', "Look this show up on the anime site to pick seasons and episodes to download"],
+  ['#theme-toggle', "Switch between light and dark"],
+  ['[data-theme-mode="system"]', "Follow your device: light by day, dark at night if your device does that"],
+  ['.swatch', "Use this colour for buttons and highlights (only you see it)"],
+  ['#accent-picker', "Pick any colour you like"],
+  ['.sn-back', "Back to the list of settings"],
   ['#mal-clear', "Forget the saved MyAnimeList Client ID (Jikan is used instead)"],
   ['#check-updates', "Ask GitHub now whether a newer AniStash is out (normally checked every few hours)"],
   ['#auto-update', "Install new AniStash versions by themselves, while nothing is downloading"],
@@ -485,9 +569,9 @@ function tourSteps() {
       text: "See what's downloading and what's finished. Finished episodes go straight to your NAS, and Jellyfin/Plex is told about them." },
     { route: "#/downloads", el: '[data-tabto="following"]', title: "Following",
       text: "Shows you follow, when their next episode airs, and when AniStash last checked." },
-    { route: "#/settings", el: admin ? "#locs" : "#pw", title: "Settings",
-      text: admin ? "Where downloads are saved, Jellyfin/Plex, users, your password and updates all live in Settings."
-                  : "Change your password and see where you're signed in." },
+    { route: "#/settings", el: "#settings-nav", title: "Settings",
+      text: admin ? "Settings is split into sections: updates, appearance (light or dark, your own colours), downloads, storage, Jellyfin/Plex, users and more."
+                  : "Pick light or dark and your own colours under Appearance, and change your password under Your account." },
     { route: "#/", title: "One last tip",
       text: "Not sure what a button does? Hover over it, or press and hold it on a phone, and it explains itself. Enjoy!" },
   ];
@@ -621,6 +705,9 @@ async function route() {
     return;
   }
   if (seq !== routeSeq) return;  // a newer navigation started while this one waited
+  if (status.user && (status.user.theme_mode !== theme.mode || status.user.accent !== theme.accent)) {
+    applyTheme({ mode: status.user.theme_mode, accent: status.user.accent }, { fade: true });
+  }
   // Fresh install or unfinished setup always lands in the wizard
   if (!status.has_admin && name !== "setup") return void (location.hash = "#/setup");
   if (status.has_admin && !status.logged_in && name !== "login") return void (location.hash = "#/login");
@@ -2380,10 +2467,10 @@ async function testMediaServer(form) {
   }
 }
 
-function accountCard() {
+function accountSection() {
   const role = status.user?.role || "";
   return `
-    <form class="card" id="pw"><h2>Your account</h2>
+    <form class="card" id="pw"><h2>Password</h2>
       <p class="muted">Signed in as <b>${esc(status.username)}</b> · ${esc(role)}</p>
       <div class="grid2">
         <label class="field"><span>Current password</span><input type="password" name="current" autocomplete="current-password" required></label>
@@ -2391,21 +2478,86 @@ function accountCard() {
           <div class="hint">At least 10 characters.</div></label>
       </div>
       <div class="row end"><button class="primary" type="submit">Change password</button></div>
-      <h3 style="margin-top:1rem">Signed-in devices</h3>
+    </form>
+    <div id="media-link"></div>
+    <div class="card"><h2>Signed-in devices</h2>
       <div id="sessions" class="muted small">${loading()}</div>
       <div class="row" style="margin-top:.75rem"><button type="button" id="logout" class="ghost">Log out</button>
         <button type="button" id="logout-all" class="danger small">Log out on all devices</button></div>
-      <h3 style="margin-top:1rem">Show titles in</h3>
+    </div>`;
+}
+
+function appearanceSection() {
+  const custom = theme.accent && !ACCENTS.some(([hex]) => hex === theme.accent);
+  return `
+    <div class="card" id="appearance">
+      <p class="muted small" style="margin-top:0">Only you see these. They follow you to every device you sign in on.</p>
+      <h3 style="margin-top:.6rem">Light or dark</h3>
+      <div class="segmented" role="group" aria-label="Light or dark">
+        ${[["system", "Match device"], ["light", "Light"], ["dark", "Dark"]].map(([k, v]) =>
+          `<button type="button" data-theme-mode="${k}" class="${theme.mode === k ? "on" : ""}">${v}</button>`).join("")}
+      </div>
+      <p class="hint">The ${icon("moon")} button at the top switches too.</p>
+      <h3>Colour</h3>
+      <div class="swatches" role="group" aria-label="Accent colour">
+        ${ACCENTS.map(([hex, name]) => `<button type="button" class="swatch ${theme.accent === hex ? "on" : ""}" data-accent="${hex}"
+            style="--sw:${hex || "#e2401f"}" aria-pressed="${theme.accent === hex}"><span></span><b>${name}</b></button>`).join("")}
+        <label class="swatch custom ${custom ? "on" : ""}" style="--sw:${custom ? theme.accent : "#888"}">
+          <span>${icon("plus")}</span><b>Your own</b>
+          <input type="color" id="accent-picker" value="${custom ? theme.accent : "#e2401f"}" aria-label="Pick any colour"></label>
+      </div>
+      <p class="hint">Very light or very dark colours are adjusted a little so text stays readable.</p>
+      <div class="theme-preview" aria-hidden="true">
+        <span class="btn primary small">${icon("download")}Download</span>
+        <span class="chip on">Fantasy</span><span class="chip">Drama</span>
+        <span class="pill accent">Downloading</span>
+        <div class="progress" style="flex:1 1 120px"><i style="width:62%"></i></div>
+      </div>
+      <h3>Show titles in</h3>
       <div class="segmented" role="group" aria-label="Title language">
         <button type="button" data-setlang="en" class="${titleLang() === "en" ? "on" : ""}">English</button>
         <button type="button" data-setlang="ja" class="${titleLang() === "ja" ? "on" : ""}">Japanese (romaji)</button>
       </div>
       <p class="hint">Search finds shows by either name, whichever you pick.</p>
-      <div id="media-link"></div>
-      <h3 style="margin-top:1rem">Help</h3>
+    </div>`;
+}
+
+function bindAppearance() {
+  const pane = $("#appearance");
+  const mark = () => {
+    for (const b of $$("[data-theme-mode]", pane)) b.classList.toggle("on", b.dataset.themeMode === theme.mode);
+    const custom = theme.accent && !ACCENTS.some(([hex]) => hex === theme.accent);
+    for (const b of $$("[data-accent]", pane)) {
+      b.classList.toggle("on", b.dataset.accent === theme.accent);
+      b.setAttribute("aria-pressed", b.dataset.accent === theme.accent);
+    }
+    const own = $(".swatch.custom", pane);
+    own.classList.toggle("on", Boolean(custom));
+    if (custom) own.style.setProperty("--sw", theme.accent);
+  };
+  pane.addEventListener("click", (e) => {
+    const mode = e.target.closest("[data-theme-mode]"), sw = e.target.closest("[data-accent]");
+    if (mode) saveTheme({ mode: mode.dataset.themeMode }).then(mark);
+    else if (sw) saveTheme({ accent: sw.dataset.accent }).then(mark);
+  });
+  const picker = $("#accent-picker", pane);
+  picker.addEventListener("input", () => { applyTheme({ accent: picker.value }); mark(); });  // live while dragging
+  picker.addEventListener("change", () => saveTheme({ accent: picker.value.toLowerCase() }).then(mark));
+  for (const b of $$("[data-setlang]", pane)) b.addEventListener("click", () => setTitleLang(b.dataset.setlang));
+}
+
+function helpSection() {
+  return `
+    <div class="card"><h2>Getting around</h2>
+      <p class="muted small">Not sure what a button does? Hover over it, or press and hold it on a phone.</p>
       <div class="row"><button type="button" class="small" id="replay-tour">Show the tour again</button>
         <button type="button" class="small" id="show-changes">What's new</button></div>
-    </form>`;
+    </div>
+    <div class="card"><h2>About AniStash</h2>
+      <p>Version <b>${esc(status.version)}</b> · free and open source under the GPL-3.0 license.</p>
+      <p class="muted small">AniStash was made with Claude Code, Anthropic's AI coding assistant, directed and tested by its maintainer.
+        Source, documentation and issues: <a href="https://github.com/JustinMarxGit/anistash" target="_blank" rel="noopener">github.com/JustinMarxGit/anistash</a>.</p>
+    </div>`;
 }
 
 const SERVER_LABEL = { jellyfin: "Jellyfin", plex: "Plex" };
@@ -2423,10 +2575,10 @@ async function mediaLinkCard(el) {
   if (data.kind === "none") return;
   const label = SERVER_LABEL[data.kind];
   const selected = data.off ? "-" : data.linked?.id || "";
-  el.innerHTML = `<h3 style="margin-top:1rem">Your ${label} account</h3>
+  el.innerHTML = `<div class="card"><h2>Your ${label} account</h2>
     <label class="field"><span>Picked for you learns from what this account watches</span>
       <select id="media-user">${mediaAccountOptions(data.accounts, selected)}</select></label>
-    ${data.error ? `<p class="hint">Couldn't reach ${label}: ${esc(data.error)}</p>` : ""}`;
+    ${data.error ? `<p class="hint">Couldn't reach ${label}: ${esc(data.error)}</p>` : ""}</div>`;
   $("#media-user", el).addEventListener("change", async (e) => {
     try {
       await api("/api/account/media-user", { method: "PUT", body: { account_id: e.target.value } });
@@ -2437,11 +2589,8 @@ async function mediaLinkCard(el) {
   });
 }
 
-function bindAccountCard() {
+function bindAccount() {
   mediaLinkCard($("#media-link"));
-  for (const b of $$("[data-setlang]")) b.addEventListener("click", () => setTitleLang(b.dataset.setlang));
-  $("#replay-tour").addEventListener("click", () => { location.hash = "#/"; setTimeout(startTour, 300); });
-  $("#show-changes").addEventListener("click", () => showWhatsNew({ all: true }));
   $("#pw").addEventListener("submit", async (e) => {
     e.preventDefault();
     try { await busy(e.submitter, () => api("/api/account/password", { method: "POST", body: formData(e.target) })); toast("Password changed. Other devices were signed out."); e.target.reset(); }
@@ -2456,6 +2605,11 @@ function bindAccountCard() {
   api("/api/account/sessions").then(({ sessions }) => {
     $("#sessions").innerHTML = sessions.map((x) => `<div>${esc(x.user_agent.replace(/^Mozilla\/5\.0 \(([^)]*)\).*$/, "$1").slice(0, 60) || "Unknown device")} · ${esc(x.ip)} · last active ${new Date(x.last_seen_at * 1000).toLocaleString()}</div>`).join("") || "None";
   }).catch(() => {});
+}
+
+function bindHelp() {
+  $("#replay-tour").addEventListener("click", () => { location.hash = "#/"; setTimeout(startTour, 300); });
+  $("#show-changes").addEventListener("click", () => showWhatsNew({ all: true }));
 }
 
 const ROLE_HELP = {
@@ -2586,53 +2740,151 @@ async function auditPanel(container) {
   } catch (e) { container.innerHTML = `<div class="error-box">${esc(e.message)}</div>`; }
 }
 
+// Settings: a list of sections instead of one long page. On a phone the list comes first and a
+// section opens on its own (with a way back); on a wide screen the list stays beside it.
+const SETTINGS_SECTIONS = [
+  { id: "updates", icon: "spark", title: "Updates", desc: "Check for and install new versions", admin: true },
+  { id: "appearance", icon: "palette", title: "Appearance", desc: "Light or dark, colours, titles" },
+  { id: "downloads", icon: "download", title: "Downloads", desc: "Sub or dub, quality, naming", admin: true },
+  { id: "account", icon: "user", title: "Your account", desc: "Password, devices, watch history" },
+  { id: "storage", icon: "drive", title: "Storage", desc: "Where downloads are saved", admin: true },
+  { id: "media", icon: "tv", title: "Media server", desc: "Jellyfin or Plex", admin: true },
+  { id: "users", icon: "users", title: "Users", desc: "Who can use AniStash", admin: true },
+  { id: "ratings", icon: "star", title: "Ratings", desc: "MyAnimeList Client ID", admin: true },
+  { id: "tools", icon: "settings", title: "Tools & logs", desc: "ani-cli, security log, setup", admin: true },
+  { id: "help", icon: "help", title: "Help & about", desc: "Tour, what's new, version" },
+];
+
 async function settingsView() {
-  if (!can.admin()) {
-    // Members and viewers only manage their own account
-    view.innerHTML = `<h1>Settings</h1>${accountCard()}`;
-    bindAccountCard();
-    return;
-  }
-  view.innerHTML = loading();
-  const [s, sys] = await Promise.all([api("/api/settings"), api("/api/system")]);
-  // Most used first: updates, download defaults and your account, then the one-time setup
-  const updateState = sys.update_available
-    ? `Version ${esc(sys.latest)} is ready to install.`
-    : sys.latest ? "You're on the newest version." : "Couldn't reach GitHub to check for a new version.";
+  const sections = SETTINGS_SECTIONS.filter((x) => !x.admin || can.admin());
+  const wanted = params().s;
+  const current = sections.find((x) => x.id === wanted) || null;
+  const shown = current || sections[0];  // wide screens always show one
   view.innerHTML = `
-    <h1>Settings</h1>
-    <div class="card update-card ${sys.update_available ? "has-update" : ""}" id="updates">
-      <div class="update-head">
-        <div class="grow">
-          <h2>AniStash v${esc(status.version)}</h2>
-          <p class="muted" style="margin:0">${updateState}</p>
+    <div class="settings ${current ? "has-section" : ""}">
+      <nav class="settings-nav" id="settings-nav" aria-label="Settings sections">
+        <h1>Settings</h1>
+        ${sections.map((x) => `<a class="sn-item ${x.id === shown.id ? "on" : ""}" href="#/settings?s=${x.id}" data-s="${x.id}">
+          <span class="sn-icon">${icon(x.icon)}</span>
+          <span class="grow"><b>${x.title}</b><small data-desc="${x.id}">${x.desc}</small></span>
+          ${icon("arrow", "sn-chevron")}</a>`).join("")}
+      </nav>
+      <section class="settings-pane" id="settings-pane" aria-live="polite">
+        <a class="btn small ghost sn-back" href="#/settings">${icon("back")}Settings</a>
+        <h1 class="sn-title">${shown.title}</h1>
+        <div id="section">${loading()}</div>
+      </section>
+    </div>`;
+  if (can.admin()) {
+    api("/api/system/update-status").then((u) => {
+      if (!u.update_available) return;
+      const item = $('[data-s="updates"]');
+      item?.querySelector("b").insertAdjacentHTML("beforeend", ` <span class="badge-dot">${esc(u.latest)}</span>`);
+      if (item) item.querySelector("[data-desc]").textContent = `Version ${u.latest} is ready to install`;
+    }).catch(() => {});
+  }
+  const seq = routeSeq;
+  try {
+    await SETTINGS_RENDER[shown.id]($("#section"));
+  } catch (err) {
+    if (seq === routeSeq) $("#section").innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
+  }
+}
+
+const SETTINGS_RENDER = {
+  async updates(el) {
+    const [s, sys] = await Promise.all([api("/api/settings"), api("/api/system")]);
+    const updateState = sys.update_available
+      ? `Version ${esc(sys.latest)} is ready to install.`
+      : sys.latest ? "You're on the newest version." : "Couldn't reach GitHub to check for a new version.";
+    el.innerHTML = `
+      <div class="card update-card ${sys.update_available ? "has-update" : ""}" id="updates">
+        <div class="update-head">
+          <div class="grow">
+            <h2>AniStash v${esc(status.version)}</h2>
+            <p class="muted" style="margin:0">${updateState}</p>
+          </div>
+          <div class="row">
+            ${sys.update_available ? `<button class="primary" id="update-app" ${sys.helper ? "" : "disabled"}>${icon("download")}Update to ${esc(sys.latest)}</button>` : ""}
+            <button class="${sys.update_available ? "" : "primary"}" id="check-updates">${icon("retry")}Check for updates</button>
+          </div>
         </div>
-        <div class="row">
-          ${sys.update_available ? `<button class="primary" id="update-app" ${sys.helper ? "" : "disabled"}>${icon("download")}Update to ${esc(sys.latest)}</button>` : ""}
-          <button class="${sys.update_available ? "" : "primary"}" id="check-updates">${icon("retry")}Check for updates</button>
-        </div>
-      </div>
-      ${sys.update_available ? `<a class="small" href="https://github.com/JustinMarxGit/anistash/releases" target="_blank" rel="noopener">What's new in ${esc(sys.latest)}</a>` : ""}
-      <label class="check" style="margin-top:.75rem"><input type="checkbox" id="auto-update" ${s.auto_update ? "checked" : ""} ${sys.helper ? "" : "disabled"}>
-        Install updates automatically</label>
-      <p class="hint" style="margin-top:0">Checks every 30 minutes and installs a new version while nothing is downloading. If an update fails, the previous version is put back. When this is off, admins see a banner instead.</p>
-    </div>
+        ${sys.update_available ? `<a class="small" href="https://github.com/JustinMarxGit/anistash/releases" target="_blank" rel="noopener">What's new in ${esc(sys.latest)}</a>` : ""}
+        <label class="check" style="margin-top:.75rem"><input type="checkbox" id="auto-update" ${s.auto_update ? "checked" : ""} ${sys.helper ? "" : "disabled"}>
+          Install updates automatically</label>
+        <p class="hint" style="margin-top:0">Checks every 30 minutes and installs a new version while nothing is downloading. If an update fails, the previous version is put back. When this is off, admins see a banner instead.</p>
+      </div>`;
+    $("#update-app")?.addEventListener("click", () => runUpdate(sys.latest));
+    $("#check-updates").addEventListener("click", async (e) => {
+      try {
+        const info = await busy(e.currentTarget, () => api("/api/system/update-status?fresh=1"));
+        if (!info.update_available) return toast(`You're up to date (v${info.current})`);
+        toast(`AniStash ${info.latest} is available`);
+        route.bannerChecked = false;
+        route();  // shows the Update button
+      } catch (err) { toast(err.message, true); }
+    });
+    $("#auto-update").addEventListener("change", async (e) => {
+      try {
+        prefs = await api("/api/settings", { method: "PUT", body: { auto_update: e.target.checked } });
+        toast(e.target.checked ? "Updates will install automatically" : "Automatic updates are off. You'll see a banner when one is available");
+        refreshUpdateBanner();
+      } catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; }
+    });
+  },
 
-    <form class="card" id="defaults"><h2>Downloads</h2>${defaultsForm(s)}
-      <div class="row end"><button class="primary" type="submit">Save</button></div></form>
+  appearance(el) {
+    el.innerHTML = appearanceSection();
+    bindAppearance();
+  },
 
-    ${accountCard()}
+  async downloads(el) {
+    const s = await api("/api/settings");
+    el.innerHTML = `<form class="card" id="defaults"><h2>Download defaults</h2>
+      <p class="muted small">What show pages start with. You can still change them for each download.</p>
+      ${defaultsForm(s)}<div class="row end"><button class="primary" type="submit">Save</button></div></form>`;
+    $("#defaults").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try { prefs = await busy(e.submitter, () => api("/api/settings", { method: "PUT", body: formData(e.target) })); toast("Saved"); }
+      catch (err) { toast(err.message, true); }
+    });
+  },
 
-    <div class="card"><h2>Download locations</h2><div id="locs"></div></div>
+  account(el) {
+    el.innerHTML = accountSection();
+    bindAccount();
+  },
 
-    <form class="card" id="ms"><h2>Media server</h2>${mediaServerForm(s)}
-      <div class="row end"><button type="button" id="ms-test">Test</button><button class="primary" type="submit">Save</button></div></form>
+  storage(el) {
+    el.innerHTML = `<div class="card"><h2>Download locations</h2>
+      <p class="muted small">NAS shares (SMB or NFS) or folders where finished episodes are saved.</p><div id="locs"></div></div>`;
+    return locationsPanel($("#locs"));
+  },
 
-    <div class="card"><h2>Users</h2>
+  async media(el) {
+    const s = await api("/api/settings");
+    el.innerHTML = `<form class="card" id="ms"><h2>Jellyfin or Plex</h2>${mediaServerForm(s)}
+      <div class="row end"><button type="button" id="ms-test">Test</button><button class="primary" type="submit">Save</button></div></form>`;
+    bindMediaServerForm($("#ms"));
+    $("#ms").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try { await busy(e.submitter, () => saveMediaServer(e.target)); toast("Media server settings saved"); e.target.token.value = ""; }
+      catch (err) { toast(err.message, true); }
+    });
+    $("#ms-test").addEventListener("click", (e) => busy(e.currentTarget, () => testMediaServer($("#ms"))));
+    if (s.media_server !== "none" && s.media_token_set) loadLibraries($("#ms"), s.media_library_id).catch(() => {});
+  },
+
+  users(el) {
+    el.innerHTML = `<div class="card"><h2>Who can use AniStash</h2>
       <p class="muted small">Admins manage everything. Members can browse and download. Viewers can only browse.</p>
-      <div id="users"></div></div>
+      <div id="users"></div></div>`;
+    return usersPanel($("#users"));
+  },
 
-    <form class="card" id="mal"><h2>Ratings</h2>
+  async ratings(el) {
+    const s = await api("/api/settings");
+    el.innerHTML = `<form class="card" id="mal"><h2>MyAnimeList</h2>
       <p class="muted small">Best this season combines fan ratings from MyAnimeList, AniList and Kitsu with what's popular on hianime.</p>
       <label class="field"><span>MyAnimeList Client ID (optional)</span>
         <input type="text" name="mal_client_id" autocomplete="off" spellcheck="false"
@@ -2640,86 +2892,60 @@ async function settingsView() {
       <p class="hint">Makes MyAnimeList scores reliable. It's free: sign in at myanimelist.net, open <i>Account settings → API → Create ID</i>
         (App type: <i>other</i>), then paste the Client ID here. Without one, AniStash uses Jikan, a public MyAnimeList mirror, when it's up.</p>
       <div class="row end">${s.mal_client_id_set ? `<button type="button" class="small" id="mal-clear">Remove</button>` : ""}
-        <button class="primary" type="submit">Save</button></div></form>
+        <button class="primary" type="submit">Save</button></div></form>`;
+    const saveMal = async (value, button) => {
+      try {
+        prefs = await busy(button, () => api("/api/settings", { method: "PUT", body: { mal_client_id: value } }));
+        browseCache.delete("/api/recommend/season");
+        browseCache.delete("/api/recommend/for-you");
+        toast(value ? "MyAnimeList Client ID saved" : "MyAnimeList Client ID removed");
+        route();
+      } catch (err) { toast(err.message, true); }
+    };
+    $("#mal").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const value = e.target.mal_client_id.value.trim();
+      if (value) saveMal(value, e.submitter);
+    });
+    $("#mal-clear")?.addEventListener("click", (e) => saveMal("", e.currentTarget));
+  },
 
-    <div class="card"><h2>Tools</h2>
-      <div class="checks">
-        <div><span>ani-cli</span><span>${esc(sys.ani_cli || "not found")}</span></div>
-        <div><span>yt-dlp</span><span>${esc(sys.yt_dlp || "not found")}</span></div>
-        <div><span>ffmpeg</span><span>${esc(sys.ffmpeg || "not found")}</span></div>
+  async tools(el) {
+    const sys = await api("/api/system");
+    el.innerHTML = `
+      <div class="card"><h2>ani-cli and friends</h2>
+        <div class="checks">
+          <div><span>ani-cli</span><span>${esc(sys.ani_cli || "not found")}</span></div>
+          <div><span>yt-dlp</span><span>${esc(sys.yt_dlp || "not found")}</span></div>
+          <div><span>ffmpeg</span><span>${esc(sys.ffmpeg || "not found")}</span></div>
+        </div>
+        <p class="muted small">If searches or downloads start failing, the anime site probably changed. Updating ani-cli usually fixes it. Tools also update weekly on their own.</p>
+        <button id="update-tools" ${sys.helper ? "" : "disabled"}>Update ani-cli and yt-dlp</button>
+        <pre id="update-out" class="small muted" style="white-space:pre-wrap" hidden></pre>
       </div>
-      <p class="muted small">If searches or downloads start failing, the anime site probably changed. Updating ani-cli usually fixes it. Tools also update weekly on their own.</p>
-      <button id="update-tools" ${sys.helper ? "" : "disabled"}>Update ani-cli and yt-dlp</button>
-      <pre id="update-out" class="small muted" style="white-space:pre-wrap" hidden></pre>
-    </div>
+      <div class="card"><h2>Security log</h2>
+        <p class="muted small">Logins, failed attempts and changes to users and settings.</p>
+        <div id="audit"></div></div>
+      <div class="card"><h2>Setup</h2>
+        <p class="muted">Walk through the setup wizard again. Your locations, settings and queue are kept.</p>
+        <a class="btn" href="#/setup?rerun=1">Run setup again</a>
+      </div>`;
+    $("#update-tools").addEventListener("click", async (e) => {
+      try {
+        const r = await busy(e.currentTarget, () => api("/api/system/update-tools", { method: "POST" }));
+        $("#update-out").hidden = false;
+        $("#update-out").textContent = r.output;
+        toast("Update finished");
+      } catch (err) { toast(err.message, true); }
+    });
+    return auditPanel($("#audit"));
+  },
 
-    <div class="card"><h2>Security log</h2>
-      <p class="muted small">Logins, failed attempts and changes to users and settings.</p>
-      <div id="audit"></div></div>
-
-    <div class="card"><h2>Setup</h2>
-      <p class="muted">Walk through the setup wizard again. Your locations, settings and queue are kept.</p>
-      <a class="btn" href="#/setup?rerun=1">Run setup again</a>
-    </div>`;
-
-  locationsPanel($("#locs"));
-  usersPanel($("#users"));
-  auditPanel($("#audit"));
-  bindAccountCard();
-  $("#defaults").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    try { prefs = await busy(e.submitter, () => api("/api/settings", { method: "PUT", body: formData(e.target) })); toast("Saved"); }
-    catch (err) { toast(err.message, true); }
-  });
-  bindMediaServerForm($("#ms"));
-  const saveMal = async (value, button) => {
-    try {
-      prefs = await busy(button, () => api("/api/settings", { method: "PUT", body: { mal_client_id: value } }));
-      browseCache.delete("/api/recommend/season");
-      browseCache.delete("/api/recommend/for-you");
-      toast(value ? "MyAnimeList Client ID saved" : "MyAnimeList Client ID removed");
-      route();
-    } catch (err) { toast(err.message, true); }
-  };
-  $("#mal").addEventListener("submit", (e) => {
-    e.preventDefault();
-    const value = e.target.mal_client_id.value.trim();
-    if (value) saveMal(value, e.submitter);
-  });
-  $("#mal-clear")?.addEventListener("click", (e) => saveMal("", e.currentTarget));
-  $("#ms").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    try { await busy(e.submitter, () => saveMediaServer(e.target)); toast("Media server settings saved"); e.target.token.value = ""; }
-    catch (err) { toast(err.message, true); }
-  });
-  $("#ms-test").addEventListener("click", (e) => busy(e.currentTarget, () => testMediaServer($("#ms"))));
-  if (s.media_server !== "none" && s.media_token_set) loadLibraries($("#ms"), s.media_library_id).catch(() => {});
-  $("#update-tools").addEventListener("click", async (e) => {
-    try {
-      const r = await busy(e.currentTarget, () => api("/api/system/update-tools", { method: "POST" }));
-      $("#update-out").hidden = false;
-      $("#update-out").textContent = r.output;
-      toast("Update finished");
-    } catch (err) { toast(err.message, true); }
-  });
-  $("#update-app")?.addEventListener("click", (e) => runUpdate(sys.latest));
-  $("#check-updates")?.addEventListener("click", async (e) => {
-    try {
-      const info = await busy(e.currentTarget, () => api("/api/system/update-status?fresh=1"));
-      if (!info.update_available) return toast(`You're up to date (v${info.current})`);
-      toast(`AniStash ${info.latest} is available`);
-      route.bannerChecked = false;
-      route();  // shows the Update button
-    } catch (err) { toast(err.message, true); }
-  });
-  $("#auto-update").addEventListener("change", async (e) => {
-    try {
-      prefs = await api("/api/settings", { method: "PUT", body: { auto_update: e.target.checked } });
-      toast(e.target.checked ? "Updates will install automatically" : "Automatic updates are off. You'll see a banner when one is available");
-      refreshUpdateBanner();
-    } catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; }
-  });
-}
+  help(el) {
+    el.innerHTML = helpSection();
+    bindHelp();
+  },
+};
 
 // Updates (admins only) ---------------------------------------------------------------------------
 
