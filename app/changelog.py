@@ -5,6 +5,12 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "1.1.1",
+        "title": "The logo wears your colour",
+        "items": ["The AniStash logo at the top, on the login screen and in your browser tab now takes on the colour "
+                  "you picked under Settings → Appearance."],
+    },
+    {
         "version": "1.1.0",
         "title": "Your colours, and a tidier Settings",
         "items": [

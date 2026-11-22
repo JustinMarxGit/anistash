@@ -147,8 +147,8 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .86em;
 }
 body.scrolled .topbar { border-bottom-color: var(--border); }
 .brand { display: flex; align-items: center; gap: .55rem; color: var(--text); text-decoration: none; }
-.brand img { transition: transform .5s var(--spring); }
-.brand:hover img { transform: rotate(-8deg) scale(1.06); }
+.brand .logo { flex: none; transition: transform .5s var(--spring); }
+.brand:hover .logo { transform: rotate(-8deg) scale(1.06); }
 .brand span { font-family: var(--display); font-weight: 800; font-size: 1.32rem; letter-spacing: -.045em; }
 
 .nav {

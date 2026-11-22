@@ -168,6 +168,15 @@ function applyTheme(next = {}, { fade = false } = {}) {
     for (const v of ["--accent", "--accent-hover", "--accent-soft", "--accent-text"]) root.style.removeProperty(v);
   }
   for (const m of document.querySelectorAll('meta[name="theme-color"]')) m.content = dark ? "#0d0e12" : "#f5f2ec";
+  // The browser tab's icon wears the same colour as the logo
+  const css = getComputedStyle(root);
+  const fill = css.getPropertyValue("--accent").trim(), ink = css.getPropertyValue("--accent-text").trim();
+  const favicon = document.getElementById("favicon");
+  if (favicon && fill) {
+    favicon.href = "data:image/svg+xml," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 104">
+      <rect width="104" height="104" rx="26" fill="${fill}"/>
+      <path d="M29 33.5H75.5Q72 45.5 57.5 55M50.5 46Q51.5 66.5 33 79" fill="none" stroke="${ink}" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/></svg>`);
+  }
   const toggle = document.getElementById("theme-toggle");
   if (toggle) {
     toggle.innerHTML = icon(dark ? "sun" : "moon");
@@ -789,7 +798,7 @@ route();
 function loginView() {
   view.innerHTML = `
     <form class="login card" id="login">
-      <img class="seal" src="/static/icons/icon.svg" alt="">
+      <svg class="seal" aria-hidden="true"><use href="#logo"/></svg>
       <h1>Welcome back</h1>
       <p class="muted">Sign in with your AniStash account.</p>
       <div id="err"></div>
