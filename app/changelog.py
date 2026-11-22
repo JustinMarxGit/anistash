@@ -5,6 +5,13 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "0.10.6",
+        "title": "Cleaner spotlight on phones",
+        "items": ["On phones the spotlight on Browse shows less on top of the artwork: a shorter details line, "
+                  "compact buttons, a full-width timer line instead of arrows (swipe instead), and the picture "
+                  "has more room."],
+    },
+    {
         "version": "0.10.5",
         "title": "Spotlight timer fixed",
         "items": ["After pressing the spotlight's next or back arrow, its timer line now always fills up again. "

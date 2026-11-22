@@ -807,7 +807,8 @@ function featureCarousel(feature, items) {
         <div class="slide-text">
           <span class="eyebrow">${icon("spark")} #${rank} trending</span>
           <h1>${esc(showTitle(m))}</h1>
-          <div class="meta">${esc([m.format?.replace("_", " "), m.year, m.episodes && `${m.episodes} episodes`, ...(m.genres || [])].filter(Boolean).join(" · "))}</div>
+          <div class="meta">${esc([m.format?.replace("_", " "), m.year, m.episodes && `${m.episodes} episodes`].filter(Boolean).join(" · "))}${(m.genres || []).length
+            ? `<span class="meta-genres"> · ${esc(m.genres.join(" · "))}</span>` : ""}</div>
           <div class="row"><a class="btn primary" href="#/anime?id=${m.id}" ${i ? 'tabindex="-1"' : ""}>${icon("arrow")}More info</a>
             <a class="btn glass" href="#/search?q=${encodeURIComponent(m.english || m.romaji || m.title)}" ${i ? 'tabindex="-1"' : ""}>${icon("download")}Find episodes</a>
             <span data-card="${m.id}"><span data-lib></span></span></div>
