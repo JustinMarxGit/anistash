@@ -302,6 +302,7 @@ input::placeholder { color: var(--muted); opacity: .8; }
 .carousel-ui .dot i { position: absolute; inset: 0; background: #fff; transform: scaleX(0); transform-origin: left; }
 .carousel-ui .dot.on i { animation: dot-fill 7s linear forwards; }
 .feature.paused .dot.on i, .feature.offscreen .dot.on i, .feature.hidden-tab .dot.on i { animation-play-state: paused; }
+.carousel-ui .dot.on { background: rgb(255 255 255 / 45%); }  /* the current show is clear even while paused */
 .feature.still .dot.on i { animation: none; transform: scaleX(1); }
 .carousel-ui .fbtn { width: 34px; height: 34px; min-height: 0; padding: 0; display: grid; place-items: center; border-radius: 50%;
   border: 1px solid rgb(255 255 255 / 26%); background: rgb(13 14 18 / 35%); color: #fff; backdrop-filter: blur(6px); }

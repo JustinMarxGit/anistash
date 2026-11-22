@@ -854,9 +854,11 @@ function featureCarousel(feature, items) {
   if (!reduced) feature.addEventListener("animationend", (e) => { if (e.animationName === "dot-fill") go(current + 1); });
   else feature.classList.add("still");
   const pause = (on) => feature.classList.toggle("paused", on);
-  feature.addEventListener("pointerenter", (e) => { if (e.pointerType === "mouse") pause(true); });
-  feature.addEventListener("pointerleave", () => pause(false));
-  feature.addEventListener("focusin", () => pause(true));
+  // Reading a show pauses the timer; the arrows and dots don't, so after clicking one the new
+  // show's bar visibly starts filling. Only keyboard focus pauses (a clicked button keeps focus).
+  feature.addEventListener("pointerover", (e) => { if (e.pointerType === "mouse") pause(!e.target.closest(".carousel-ui")); });
+  feature.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") pause(false); });
+  feature.addEventListener("focusin", (e) => { if (e.target.matches(":focus-visible") && !e.target.closest(".carousel-ui")) pause(true); });
   feature.addEventListener("focusout", () => pause(false));
   const onVisible = () => { if (!feature.isConnected) return document.removeEventListener("visibilitychange", onVisible); feature.classList.toggle("hidden-tab", document.hidden); };
   document.addEventListener("visibilitychange", onVisible);

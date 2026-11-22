@@ -5,6 +5,12 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "0.10.5",
+        "title": "Spotlight timer fixed",
+        "items": ["After pressing the spotlight's next or back arrow, its timer line now always fills up again. "
+                  "Hovering over a show still pauses it, so you can read."],
+    },
+    {
         "version": "0.10.4",
         "title": "Flick through the spotlight",
         "items": ["On phones, the big banner on Browse now follows your thumb: drag it and it lifts and tilts like a "
