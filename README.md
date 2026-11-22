@@ -8,6 +8,7 @@ AniStash runs in its own Proxmox LXC, created with one command on the Proxmox ho
 
 - **Browse and search**: trending and seasonal anime (posters and synopses from AniList), and ani-cli search with sub/dub.
 - **Seasons**: a show's seasons are grouped automatically, including "Season 3 Part 2" and "Final Season". Queue every season at once, one season, or specific episodes (`1-5, 8, 12-`).
+- **Follow shows**: tap *Follow* on a show and every new episode downloads by itself as it comes out, including new seasons. Checks are timed around each broadcast using AniList's airing schedule.
 - **Highest quality with fallback**: each episode downloads at the best quality offered. If that download fails or comes out broken, AniStash tries the next quality down, then the next.
 - **Files Jellyfin and Plex play directly**: every download is checked with ffprobe and remuxed (no re-encode) to a clean MP4 with faststart. Subtitles are converted to `.en.srt`. Layout: `Show (2013)/Season 01/Show (2013) - S01E01.mp4`.
 - **Download locations**: add SMB or NFS shares, or local folders, from the UI. Each one is mounted, write-tested and remounted at boot. Pick one per download.
@@ -70,6 +71,15 @@ The path is the same folder as Jellyfin or Plex sees it. For example, your NAS s
 
 - **Jellyfin API key:** Dashboard → API Keys → +
 - **Plex token:** in Plex Web, open any item → ⋯ → Get Info → View XML, and copy the `X-Plex-Token` value from the address bar.
+
+## Following shows
+
+On a show page, **☆ Follow** keeps that show up to date:
+
+- **Follow options:** pick the season to follow (the newest by default), whether to also follow new seasons, and what to do with episodes already out: download what's missing from every season, from just that season, or skip them and only get new ones.
+- **Timing:** AniStash reads the airing schedule from AniList and checks about 20 minutes after each broadcast. Until the episode shows up on the site it checks every hour, because uploads trail the broadcast by a few hours and dubs by longer. Finished shows are still checked (every few hours, then daily, then weekly) for late dubs and new seasons.
+- **What gets downloaded:** new episodes go through the normal queue, with the same quality fallback, naming and Jellyfin/Plex scan, tagged *auto*. Episodes already on disk are skipped. Failed ones are retried on later checks. Episodes you cancel are left alone.
+- **Managing follows:** use **Downloads → Following** to see the next episode and when it airs, the last check, and to Check now, Pause, or Unfollow. Members can follow shows; viewers can't.
 
 ## Users and security
 

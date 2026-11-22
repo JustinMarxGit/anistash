@@ -53,6 +53,6 @@ if [ -n "$episode" ]; then
     exit 0
 fi
 
-printf '1\n2\n3\n12.5\n' | "$ANI_CLI_MENU" "Select episode: " >/dev/null
+printf '%s\n' ${FAKE_EPISODES:-1 2 3 12.5} | "$ANI_CLI_MENU" "Select episode: " >/dev/null
 printf 'Invalid episode selection\n'
 exit 1

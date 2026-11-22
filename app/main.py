@@ -15,7 +15,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import anicli, anilist, auth, config, db, jobs, locations, mediaserver, setup, shows
+from . import anicli, anilist, auth, config, db, follows, jobs, locations, mediaserver, setup, shows
 from .naming import base_title, number_seasons
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -26,8 +26,10 @@ log = logging.getLogger("anistash")
 async def lifespan(app: FastAPI):
     db.init()
     worker = asyncio.create_task(jobs.worker())
+    scheduler = asyncio.create_task(follows.scheduler())
     yield
     worker.cancel()
+    scheduler.cancel()
     await mediaserver.flush()
 
 
@@ -40,7 +42,7 @@ PUBLIC_ROUTES = ("/api/status", "/api/login", "/api/logout")
 # Still reachable while the user must change their password
 PASSWORD_CHANGE_ROUTES = ("/api/status", "/api/logout", "/api/account/password")
 USER_ERRORS = (anicli.AniCliError, locations.LocationError, mediaserver.MediaServerError, jobs.QueueError,
-               setup.SetupError, auth.AuthError, ValueError)
+               setup.SetupError, auth.AuthError, follows.FollowError, ValueError)
 UNSAFE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
 
 SECURITY_HEADERS = {
@@ -508,6 +510,17 @@ async def clear_finished(user=MEMBER):
     return {"removed": jobs.clear_finished(None if user["role"] == "admin" else user["id"])}
 
 
+@app.post("/api/batches/{batch_id}/rescan")
+async def rescan_batch(batch_id: int, user=MEMBER):
+    _own_batch(user, batch_id)
+    count = jobs.rescan(batch_id)
+    await mediaserver.flush()  # now, not after the usual 30 second wait
+    warning = db.query_one("SELECT warning FROM batches WHERE id = ?", (batch_id,))["warning"]
+    if warning:
+        raise HTTPException(400, warning)
+    return {"ok": True, "folders": count}
+
+
 @app.post("/api/batches/{batch_id}/{action}")
 async def batch_action(batch_id: int, action: str, user=MEMBER):
     _own_batch(user, batch_id)
@@ -543,6 +556,50 @@ async def item_action(item_id: int, action: str, user=MEMBER):
         jobs.move("items", item_id, action)
     else:
         raise HTTPException(404)
+    return {"ok": True}
+
+
+# Followed shows -----------------------------------------------------------------------------
+
+def _own_follow(user, follow_id: int) -> None:
+    row = follows.get(follow_id)
+    if user["role"] != "admin" and row["created_by"] != user["id"]:
+        raise HTTPException(403, "You can only change shows you follow.")
+
+
+@app.get("/api/follows")
+async def list_follows(user=VIEWER):
+    return {"follows": follows.all_follows(), "me": user["id"], "admin": user["role"] == "admin"}
+
+
+@app.post("/api/follows")
+async def add_follow(request: Request, entry: dict = Body(...), series_name: str = Body(...),
+                     location_id: int = Body(...), mode: str = Body("sub"), quality: str = Body("best"),
+                     new_seasons: bool = Body(True), only_new: bool = Body(False), user=MEMBER):
+    follow = await follows.create(entry, series_name, location_id, mode, quality, user["id"], new_seasons, only_new)
+    auth.audit(user["username"], "follow_added", f"{entry.get('title')} ({mode})", client_ip(request))
+    return follow
+
+
+@app.put("/api/follows/{follow_id}")
+async def edit_follow(follow_id: int, data: dict = Body(...), user=MEMBER):
+    _own_follow(user, follow_id)
+    return follows.update(follow_id, data)
+
+
+@app.post("/api/follows/{follow_id}/check")
+async def check_follow(follow_id: int, user=MEMBER):
+    _own_follow(user, follow_id)
+    follows.check_soon(follow_id)
+    return {"ok": True}
+
+
+@app.delete("/api/follows/{follow_id}")
+async def remove_follow(request: Request, follow_id: int, user=MEMBER):
+    _own_follow(user, follow_id)
+    title = follows.get(follow_id)["title"]
+    follows.remove(follow_id)
+    auth.audit(user["username"], "follow_removed", title, client_ip(request))
     return {"ok": True}
 
 

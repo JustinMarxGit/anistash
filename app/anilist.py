@@ -172,3 +172,30 @@ async def season_chain(title: str, limit: int = 12) -> list[dict]:
 def series_names(chain: list[dict]) -> set[str]:
     """Normalized base titles across a season chain, for matching ani-cli results."""
     return {normalize(base_title(name)) for entry in chain for name in entry["names"]}
+
+
+_AIRING = """
+query ($id: Int) {
+  Media(id: $id, type: ANIME) {
+    id status episodes
+    nextAiringEpisode { airingAt episode timeUntilAiring }
+  }
+}"""
+
+
+async def media_id(title: str) -> int | None:
+    media = await _best_match(title)
+    return media["id"] if media else None
+
+
+async def airing(media_id_: int) -> dict:
+    """Airing status of a show: {status, episodes, next_episode, next_airing_at}. Cached for an hour."""
+    data = await _gql(_AIRING, {"id": media_id_}, f"anilist:airing:{media_id_}", 3600)
+    media = (data or {}).get("Media") or {}
+    upcoming = media.get("nextAiringEpisode") or {}
+    return {
+        "status": media.get("status"),            # RELEASING, FINISHED, NOT_YET_RELEASED, HIATUS, CANCELLED
+        "episodes": media.get("episodes"),
+        "next_episode": upcoming.get("episode"),
+        "next_airing_at": upcoming.get("airingAt"),
+    }

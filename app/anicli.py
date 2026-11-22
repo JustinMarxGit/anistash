@@ -124,12 +124,12 @@ def _mode_args(dub: bool) -> list[str]:
     return ["--dub"] if dub else []
 
 
-async def search(query: str, dub: bool = False) -> list[Result]:
+async def search(query: str, dub: bool = False, fresh: bool = False) -> list[Result]:
     query = query.strip()
     if not query:
         return []
     key = ("search", query.lower(), dub)
-    if (hit := _cached(key)) is not None:
+    if not fresh and (hit := _cached(key)) is not None:
         return hit
     menus, output = await _run_capture([*_mode_args(dub), query])
     if "Select anime:" in menus:
@@ -148,9 +148,9 @@ async def search(query: str, dub: bool = False) -> list[Result]:
     raise AniCliError(_friendly_error(output))
 
 
-async def episodes(query: str, index: int, dub: bool = False) -> list[str]:
+async def episodes(query: str, index: int, dub: bool = False, fresh: bool = False) -> list[str]:
     key = ("episodes", query.lower(), index, dub)
-    if (hit := _cached(key)) is not None:
+    if not fresh and (hit := _cached(key)) is not None:
         return hit
     menus, output = await _run_capture([*_mode_args(dub), "-S", str(index), query])
     if "Select episode:" in menus:
@@ -199,13 +199,13 @@ def quality_order(available: list[str], preferred: str) -> list[str]:
     return numeric + other
 
 
-async def resolve_index(query: str, index: int, title: str, dub: bool) -> int:
+async def resolve_index(query: str, index: int, title: str, dub: bool, fresh: bool = False) -> int:
     """The current index of `title` in the results for `query`.
 
     Search order can change between queueing and downloading, so the stored index is
     only trusted when the title at that index still matches.
     """
-    results = await search(query, dub)
+    results = await search(query, dub, fresh=fresh)
     if not results:
         raise AniCliError(f'"{query}" no longer returns any results.')
     if len(results) == 1 and not results[0].title_known:

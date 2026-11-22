@@ -301,3 +301,5 @@ code { font-family: ui-monospace, monospace; font-size: .85em; }
 .audit > div { padding: .45rem .6rem; border-radius: 8px; background: var(--surface-2); word-break: break-word; }
 .audit > div.bad { background: var(--bad-soft); }
 select.small { min-height: 36px; padding: 0 .5rem; font-size: .88rem; }
+
+button.following { color: var(--accent); border-color: var(--accent); }

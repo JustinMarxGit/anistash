@@ -66,6 +66,20 @@ function params() {
   return Object.fromEntries(new URLSearchParams(query));
 }
 
+function relTime(ts) {
+  if (!ts) return "never";
+  const diff = ts * 1000 - Date.now();
+  const abs = Math.abs(diff), past = diff < 0;
+  const units = [[86400000, "day"], [3600000, "hour"], [60000, "minute"]];
+  for (const [ms, name] of units) {
+    if (abs >= ms) {
+      const n = Math.round(abs / ms);
+      return past ? `${n} ${name}${n === 1 ? "" : "s"} ago` : `in ${n} ${name}${n === 1 ? "" : "s"}`;
+    }
+  }
+  return past ? "just now" : "in a moment";
+}
+
 function bytes(n) {
   if (n == null) return "";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -464,7 +478,8 @@ async function showView() {
       </div>
     </div>
 
-    <div class="section-head"><h2>Seasons</h2><button class="small" id="all-seasons">Select all seasons</button></div>
+    <div class="section-head"><h2>Seasons</h2>
+      <div class="row">${can.download() ? `<button class="small" id="follow">☆ Follow</button>` : ""}<button class="small" id="all-seasons">Select all seasons</button></div></div>
     <div class="tabs" id="tabs" role="tablist"></div>
     <div id="season"></div>
     <div class="pad-actionbar"></div>`;
@@ -607,6 +622,64 @@ async function showView() {
   renderTabs();
   renderSeason();
   refreshExisting();
+
+  // Follow: keep this show up to date automatically
+  const followBtn = $("#follow");
+  const markFollowed = async () => {
+    if (!followBtn) return;
+    const { follows } = await api("/api/follows").catch(() => ({ follows: [] }));
+    const mode = dub ? "dub" : "sub";
+    const mine = follows.filter((f) => f.mode === mode && seasons.some((x) => x.title === f.title));
+    if (mine.length) {
+      followBtn.textContent = "★ Following";
+      followBtn.classList.add("following");
+      followBtn.onclick = () => { location.hash = "#/downloads?tab=following"; };
+    }
+  };
+  followBtn?.addEventListener("click", () => {
+    if (followBtn.classList.contains("following")) return;
+    const regular = seasons.filter((x) => !x.special);
+    const latest = regular[regular.length - 1] || seasons[seasons.length - 1];
+    const sh = sheet(`
+      <h2>Keep ${esc($("#series").value)} up to date</h2>
+      <p class="muted">AniStash checks for new episodes around each broadcast and downloads them as soon as they're on the site.</p>
+      <form id="followform">
+        <label class="field"><span>Season to follow</span><select name="season">${seasons.map((x, k) =>
+          `<option value="${k}" ${x === latest ? "selected" : ""}>${x.special ? "Special" : `Season ${x.season}`}${x.part > 1 ? ` · Part ${x.part}` : ""} — ${esc(x.title)}</option>`).join("")}</select></label>
+        <label class="check"><input type="checkbox" name="new_seasons" checked> Also follow new seasons when they come out</label>
+        <div class="field" style="margin-top:.75rem"><span class="muted small" style="font-weight:600">Episodes that are already out</span>
+          <label class="check"><input type="radio" name="backfill" value="all" checked> Download what's missing from every season</label>
+          <label class="check"><input type="radio" name="backfill" value="season"> Download what's missing from the followed season</label>
+          <label class="check"><input type="radio" name="backfill" value="none"> Skip them, only new episodes from now on</label>
+        </div>
+        <p class="hint">Saves to ${esc($("select[name=location_id]")?.selectedOptions[0]?.textContent || "the default location")} as ${dub ? "dub" : "sub"}, ${esc($("select[name=quality]").selectedOptions[0].textContent.toLowerCase())}.</p>
+        <div class="row end"><button type="button" class="ghost" data-close>Cancel</button><button class="primary" type="submit">Follow</button></div>
+      </form>`);
+    sh.querySelector("[data-close]").onclick = () => sh.remove();
+    sh.querySelector("#followform").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const f = formData(ev.target);
+      const backfill = ev.target.querySelector("input[name=backfill]:checked").value;
+      const chosen = seasons[Number(f.season)];
+      const common = { series_name: $("#series").value, location_id: locationId, mode: dub ? "dub" : "sub", quality: $("select[name=quality]").value };
+      try {
+        await busy(ev.submitter, async () => {
+          await api("/api/follows", { method: "POST", body: { ...common, new_seasons: f.new_seasons, only_new: backfill === "none",
+            entry: { query: chosen.query, index: chosen.index, title: chosen.title, season: chosen.season, offset: chosen.offset } } });
+          if (backfill === "all") {
+            // The followed season catches up by itself; queue the other seasons now
+            const others = seasons.filter((x) => x !== chosen && !x.special && x.episodes.length).map((x) => ({
+              query: x.query, index: x.index, title: x.title, season: x.season, offset: x.offset, episodes: x.episodes }));
+            if (others.length) queuedToast(await api("/api/queue", { method: "POST", body: { ...common, entries: others } }));
+          }
+        });
+        sh.remove();
+        toast(`Following ${chosen.title}. New episodes download automatically.`);
+        markFollowed();
+      } catch (err) { toast(err.message, true); }
+    });
+  });
+  markFollowed();
 }
 
 // Mirrors naming.parse_episode_selection on the server
@@ -633,9 +706,20 @@ function parseRange(text, available) {
 const expanded = new Set();
 
 async function downloadsView() {
+  const tab = params().tab === "following" ? "following" : "queue";
   view.innerHTML = `
-    <div class="section-head"><h1>Downloads</h1>${can.download() ? `<button class="small" id="clear">${can.admin() ? "Clear finished" : "Clear my finished"}</button>` : ""}</div>
+    <div class="section-head"><h1>Downloads</h1>${tab === "queue" && can.download() ? `<button class="small" id="clear">${can.admin() ? "Clear finished" : "Clear my finished"}</button>` : ""}</div>
+    <div class="segmented" role="tablist" style="margin-bottom:1rem">
+      <button type="button" class="${tab === "queue" ? "on" : ""}" data-tabto="queue">Queue</button>
+      <button type="button" class="${tab === "following" ? "on" : ""}" data-tabto="following">Following</button>
+    </div>
     <div id="queue">${loading()}</div>`;
+  for (const b of $$("[data-tabto]")) b.onclick = () => { location.hash = `#/downloads${b.dataset.tabto === "following" ? "?tab=following" : ""}`; };
+  if (tab === "following") {
+    await renderFollowing();
+    pollTimer = setInterval(renderFollowing, 15000);
+    return;
+  }
   $("#clear")?.addEventListener("click", async () => {
     const r = await api("/api/queue/clear-finished", { method: "POST" });
     toast(`Removed ${r.removed} finished ${r.removed === 1 ? "batch" : "batches"}`);
@@ -643,6 +727,65 @@ async function downloadsView() {
   });
   await renderQueue();
   pollTimer = setInterval(renderQueue, 2000);
+}
+
+const AIRING = {
+  RELEASING: ["Airing", "accent"], NOT_YET_RELEASED: ["Not aired yet", ""], FINISHED: ["Finished", "ok"],
+  HIATUS: ["On hiatus", "warn"], CANCELLED: ["Cancelled", "bad"],
+};
+
+async function renderFollowing() {
+  let data;
+  try { data = await api("/api/follows"); }
+  catch (e) { if ($("#queue")) $("#queue").innerHTML = `<div class="error-box">${esc(e.message)}</div>`; return; }
+  const el = $("#queue");
+  if (!el) return;
+  if (!data.follows.length) {
+    el.innerHTML = `<div class="card muted">You're not following anything yet. Open a show and tap <b>☆ Follow</b> to keep it up to date automatically.</div>`;
+    return;
+  }
+  el.innerHTML = data.follows.map((f) => {
+    const mine = data.admin || f.created_by === data.me;
+    const [label, cls] = f.status === "paused" ? ["Paused", "warn"] : AIRING[f.airing_status] || ["Checking…", ""];
+    const next = f.status === "paused" ? "Paused, not checking"
+      : f.airing_status === "RELEASING" && f.next_episode && f.next_airing_at
+        ? `Episode ${f.next_episode} airs ${relTime(f.next_airing_at)}`
+        : f.airing_status === "FINISHED" ? "All episodes have aired; still watching for late uploads and new seasons" : "";
+    return `<div class="batch" data-follow="${f.id}">
+      <div class="batch-head" style="cursor:default">
+        <div class="grow">
+          <b>${esc(f.series_name)} · S${String(f.season).padStart(2, "0")}</b>
+          <div class="muted small">${esc(f.title)}</div>
+          ${next ? `<div class="small" style="margin-top:.25rem">${esc(next)}</div>` : ""}
+          <div class="muted small">${f.last_checked ? `Checked ${relTime(f.last_checked)}: ${esc(f.last_result)}` : "First check is starting…"}${f.status === "active" && f.next_check ? ` · next check ${relTime(f.next_check)}` : ""}</div>
+          <div class="muted small">${esc(f.mode)} · ${esc(f.quality)} · ${esc(f.location)}${f.new_seasons ? " · new seasons too" : ""}${f.owner ? ` · by ${esc(f.owner)}` : ""}</div>
+        </div>
+        <span class="pill ${cls}">${label}</span>
+      </div>
+      ${mine ? `<div class="batch-tools">
+        <button class="small" data-f="check">Check now</button>
+        <button class="small" data-f="${f.status === "paused" ? "resume" : "pause"}">${f.status === "paused" ? "Resume" : "Pause"}</button>
+        <button class="small" data-f="seasons">${f.new_seasons ? "Stop new seasons" : "Also new seasons"}</button>
+        <button class="small danger" data-f="unfollow">Unfollow</button>
+      </div>` : ""}
+    </div>`;
+  }).join("");
+  for (const b of $$("[data-f]")) {
+    b.onclick = async () => {
+      const id = Number(b.closest("[data-follow]").dataset.follow);
+      const f = data.follows.find((x) => x.id === id);
+      try {
+        if (b.dataset.f === "check") { await api(`/api/follows/${id}/check`, { method: "POST" }); toast("Checking now…"); setTimeout(renderFollowing, 4000); }
+        else if (b.dataset.f === "pause" || b.dataset.f === "resume") await api(`/api/follows/${id}`, { method: "PUT", body: { status: b.dataset.f === "pause" ? "paused" : "active" } });
+        else if (b.dataset.f === "seasons") await api(`/api/follows/${id}`, { method: "PUT", body: { new_seasons: !f.new_seasons } });
+        else if (b.dataset.f === "unfollow") {
+          if (!confirm(`Stop following ${f.title}? Downloaded episodes stay.`)) return;
+          await api(`/api/follows/${id}`, { method: "DELETE" });
+        }
+        renderFollowing();
+      } catch (err) { toast(err.message, true); }
+    };
+  }
 }
 
 const STATUS_PILL = { queued: "", running: "accent", done: "ok", failed: "bad", cancelled: "warn", skipped: "" };
@@ -671,12 +814,13 @@ async function renderQueue() {
         <div class="grow">
           <b>${esc(b.series_name)} · S${String(b.season).padStart(2, "0")}</b>
           <div class="muted small">${esc(b.title)}</div>
-          <div class="muted small">${b.counts.done}/${total} episodes · ${esc(b.mode)} · ${esc(b.location || "?")}${b.owner ? ` · by ${esc(b.owner)}` : ""}</div>
+          <div class="muted small">${b.counts.done}/${total} episodes · ${esc(b.mode)} · ${esc(b.location || "?")}${b.owner ? ` · by ${esc(b.owner)}` : ""}${b.follow_id ? ` · <span class="pill accent">auto</span>` : ""}</div>
           <div class="progress ${b.active ? "" : "done"}" style="margin-top:.4rem"><i style="width:${progress.toFixed(1)}%"></i></div>
         </div>
         ${state}
       </div>
-      ${b.warning ? `<div class="warn-box" style="margin:0 14px 12px">${esc(b.warning)}</div>` : ""}
+      ${b.warning ? `<div class="warn-box" style="margin:0 14px 12px">${esc(b.warning)}
+        ${mine && /scan failed/.test(b.warning) ? `<div style="margin-top:.5rem"><button class="small" data-b="rescan">Scan now</button></div>` : ""}</div>` : ""}
       ${open ? `
         ${mine ? `<div class="batch-tools">
           <button class="small" data-b="up" aria-label="Move up">↑</button>
@@ -716,7 +860,10 @@ async function renderQueue() {
       const id = b.closest("[data-batch]").dataset.batch;
       try {
         if (b.dataset.b === "remove") await api(`/api/batches/${id}`, { method: "DELETE" });
-        else await api(`/api/batches/${id}/${b.dataset.b}`, { method: "POST" });
+        else if (b.dataset.b === "rescan") {
+          await busy(b, () => api(`/api/batches/${id}/rescan`, { method: "POST" }));
+          toast("Asked your media server to scan the new episodes");
+        } else await api(`/api/batches/${id}/${b.dataset.b}`, { method: "POST" });
         renderQueue(); refreshBadge();
       } catch (e) { toast(e.message, true); }
     };
@@ -1062,7 +1209,7 @@ function mediaServerForm(s) {
       <label class="field"><span data-token-label>${info.token}</span><input type="password" name="token" placeholder="${s.media_token_set ? "Saved. Leave blank to keep it." : ""}" autocomplete="off">
         <div class="hint" data-token-hint>${esc(info.tokenHint)}</div></label>
       <label class="field"><span>Anime library to scan</span>
-        <select name="library_id">${s.media_library_id
+        <select name="library_id" data-saved="${esc(s.media_library_id || "")}">${s.media_library_id
           ? `<option value="${esc(s.media_library_id)}" selected>${esc(s.media_library_name || s.media_library_id)}</option>`
           : `<option value="">Test the connection to load your libraries</option>`}</select>
         <div class="hint">AniStash only ever scans this one library, never everything on the server. With a "media server sees this as" path on the location, it scans just the new season folders, which is faster still.</div>
@@ -1105,6 +1252,7 @@ function serverBody(form) {
 
 async function loadLibraries(form, saved) {
   const select = form.library_id;
+  saved = saved ?? select.dataset.saved;
   const { libraries } = await api("/api/mediaserver/libraries", { method: "POST", body: serverBody(form) });
   const current = select.value || saved || "";
   // Preselect the saved library, else one named like anime, else the first TV library
@@ -1115,7 +1263,9 @@ async function loadLibraries(form, saved) {
     : `<option value="">No libraries found</option>`;
   const showPaths = () => {
     const lib = libraries.find((l) => l.id === select.value);
-    $(".lib-paths", form).textContent = lib?.paths.length ? `Folders in ${lib.name}: ${lib.paths.join(", ")}` : "";
+    const unsaved = select.value && select.value !== (select.dataset.saved || "");
+    $(".lib-paths", form).innerHTML = (unsaved ? `<span style="color:var(--warn);font-weight:600">Suggested, not saved yet: press Save to use ${esc(lib?.name || "it")}.</span> ` : "")
+      + (lib?.paths.length ? `Folders in ${esc(lib.name)}: ${esc(lib.paths.join(", "))}` : "");
     for (const input of $$("[data-serverpath]", form)) if (lib?.paths.length) input.placeholder = lib.paths[0];
   };
   select.onchange = showPaths;
@@ -1132,6 +1282,9 @@ async function saveMediaServer(form) {
     library_name: d.library_id ? option.textContent.replace(/ \([^)]*\)$/, "") : "",
   } });
   await api("/api/settings", { method: "PUT", body: { media_refresh: d.media_refresh } });
+  // What's shown is now what's saved
+  form.library_id.dataset.saved = d.kind === "none" ? "" : d.library_id;
+  form.library_id.dispatchEvent(new Event("change"));
 }
 
 async function testMediaServer(form) {
@@ -1283,6 +1436,7 @@ const AUDIT_LABELS = {
   settings_changed: "Changed settings", media_server_changed: "Changed media server", location_added: "Added location",
   location_changed: "Changed location", location_removed: "Removed location", queued: "Queued download",
   update_started: "Started update", admin_set: "Set admin (console)",
+  follow_added: "Followed", follow_removed: "Unfollowed",
 };
 
 async function auditPanel(container) {

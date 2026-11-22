@@ -182,7 +182,7 @@ def test_unmapped_location_scans_only_the_anime_library(isolated, monkeypatch):
     assert not any(p.startswith("/Library/Refresh") for p in received)
 
 
-def test_unmapped_location_without_library_scans_nothing(isolated, monkeypatch):
+def test_unmapped_location_without_saved_library_picks_anime(isolated, monkeypatch):
     received = []
     server = _jellyfin_server(received)
     loc = run(locations.create({"name": "Media", "type": "local", "path": str(isolated / "media")}))
@@ -197,8 +197,8 @@ def test_unmapped_location_without_library_scans_nothing(isolated, monkeypatch):
 
     run(scenario())
     server.shutdown()
-    assert received == []
-    assert "no anime library is chosen" in jobs.snapshot()[0]["warning"]
+    assert received[-1].startswith("/Items/a1/Refresh")  # the Anime library, chosen automatically
+    assert jobs.snapshot()[0]["warning"] == ""
 
 
 def test_jellyfin_failure_becomes_batch_warning(location, monkeypatch):
@@ -301,7 +301,7 @@ def test_plex_folder_scan_and_library_scan(isolated, monkeypatch):
     server.shutdown()
 
 
-def test_plex_without_library_scans_nothing(location, monkeypatch):
+def test_plex_without_saved_library_picks_anime(location, monkeypatch):
     received = []
     server = _plex_server(received)
     db.set_settings(media_server="plex", media_url=f"http://127.0.0.1:{server.server_port}", media_token="TOK")
@@ -315,8 +315,35 @@ def test_plex_without_library_scans_nothing(location, monkeypatch):
 
     run(scenario())
     server.shutdown()
-    assert received == []
-    assert "Plex scan failed: no anime library" in jobs.snapshot()[0]["warning"]
+    # Plex scans the folder through the library it picked by itself
+    assert ("/library/sections/4/refresh?path=%2Fjf%2Fanime%2FShow", "TOK") in received
+    assert db.get_setting("media_library_id") == "4"
+
+
+def test_ambiguous_libraries_still_scan_nothing(isolated, monkeypatch):
+    # No path mapping, so this needs a library refresh, and there's no clear library to pick
+    location = run(locations.create({"name": "Plain", "type": "local", "path": str(isolated / "media" / "plain")}))
+    async def two_tv_libraries(*args):
+        return [{"id": "1", "name": "TV", "type": "tvshows", "paths": []},
+                {"id": "2", "name": "Cartoons", "type": "tvshows", "paths": []}]
+    scans = []
+
+    async def scan(*args):
+        scans.append(args)
+    monkeypatch.setattr(mediaserver, "libraries", two_tv_libraries)
+    monkeypatch.setattr(mediaserver, "_scan", scan)
+    db.set_settings(media_server="jellyfin", media_url="http://jf", media_token="KEY")
+    jobs.enqueue("Show", location["id"], "sub", "best", [entry()])
+    batch_id = jobs.snapshot()[0]["id"]
+    monkeypatch.setattr(mediaserver, "DEBOUNCE", 0)
+
+    async def scenario():
+        mediaserver.notify([location["path"] + "/Show"], locations.get(location["id"]), batch_id)
+        await asyncio.sleep(0.3)
+
+    run(scenario())
+    assert scans == []
+    assert "more than one it could be" in jobs.snapshot()[0]["warning"]
 
 
 @pytest.mark.parametrize("text, expected", [
@@ -433,3 +460,52 @@ def test_mount_check_uses_mount_point_not_subfolder(isolated, monkeypatch):
     row = {"id": 4, "type": "smb", "path": str(isolated / "mnt" / "loc4" / "jellyfin" / "anime")}
     assert locations.is_mounted(row)
     assert checked == [str(isolated / "mnt" / "loc4")]
+
+
+def test_requested_quality_is_tried_first(location, isolated, monkeypatch):
+    # Regression: items.quality (what was downloaded) shadowed batches.quality (what was asked for)
+    db.set_settings(setup_complete=True, media_refresh="off")
+    jobs.enqueue("Show", location["id"], "sub", "720", [entry(episodes=["1"])])
+    _drive_worker()
+    [item] = jobs.snapshot()[0]["items"]
+    assert item["status"] == "done" and item["quality"] == "720p"
+
+
+def test_scan_picks_the_anime_library_when_none_was_saved(isolated, monkeypatch):
+    received = []
+    server = _jellyfin_server(received)  # libraries: Movies (movies), Anime (tvshows)
+    loc = run(locations.create({"name": "Media", "type": "local", "path": str(isolated / "media")}))
+    db.set_settings(media_server="jellyfin", media_url=f"http://127.0.0.1:{server.server_port}", media_token="KEY")
+    monkeypatch.setattr(mediaserver, "DEBOUNCE", 0)
+
+    async def scenario():
+        mediaserver.notify([loc["path"] + "/Show/Season 01"], locations.get(loc["id"]), 1)
+        await asyncio.sleep(0.4)
+
+    run(scenario())
+    server.shutdown()
+    assert received and received[0].startswith("/Items/a1/Refresh")
+    assert db.get_setting("media_library_name") == "Anime"
+
+
+def test_pick_library_only_guesses_when_clear():
+    libs = [{"id": "1", "name": "Movies", "type": "movies", "paths": []},
+            {"id": "2", "name": "TV", "type": "tvshows", "paths": []},
+            {"id": "3", "name": "Anime", "type": "tvshows", "paths": []}]
+    assert mediaserver.pick_library(libs)["name"] == "Anime"
+    assert mediaserver.pick_library(libs[:2])["name"] == "TV"          # the only TV library
+    assert mediaserver.pick_library([libs[1], {**libs[1], "id": "4", "name": "Cartoons"}]) is None  # ambiguous
+
+
+def test_rescan_after_a_failed_scan(location, monkeypatch):
+    notified = []
+    monkeypatch.setattr(mediaserver, "notify", lambda folders, loc, batch: notified.append(folders))
+    monkeypatch.setattr(mediaserver, "configured", lambda settings=None: True)
+    jobs.enqueue("Show", location["id"], "sub", "best", [entry(episodes=["1"])])
+    batch = jobs.snapshot()[0]
+    db.execute("UPDATE items SET status = 'done', dest = ? WHERE batch_id = ?",
+               (location["path"] + "/Show/Season 02/Show - S02E01.mp4", batch["id"]))
+    db.execute("UPDATE batches SET warning = 'Jellyfin scan failed: x' WHERE id = ?", (batch["id"],))
+    assert jobs.rescan(batch["id"]) == 1
+    assert notified == [[location["path"] + "/Show/Season 02"]]
+    assert jobs.snapshot()[0]["warning"] == ""

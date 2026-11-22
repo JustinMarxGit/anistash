@@ -35,6 +35,7 @@ def isolated(tmp_path, monkeypatch, fake_video):
     monkeypatch.setenv("FAKE_VIDEO", str(fake_video))
     monkeypatch.delenv("FAKE_FAIL", raising=False)
     monkeypatch.delenv("FAKE_BROKEN", raising=False)
+    monkeypatch.delenv("FAKE_EPISODES", raising=False)
     anicli._cache.clear()
     monkeypatch.setattr(jobs, "_wake", asyncio.Event())  # each asyncio.run() is a new loop
     db.init()

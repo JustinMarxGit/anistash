@@ -47,7 +47,7 @@ def existing_episodes(location_id: int | None, series: str, season: int, title: 
 
 
 def enqueue(series_name: str, location_id: int, mode: str, quality: str, entries: list[dict],
-            created_by: int | None = None) -> dict:
+            created_by: int | None = None, follow_id: int | None = None, always_skip_existing: bool = False) -> dict:
     """Queues seasons. Each entry: {query, index, title, season, offset, episodes: [...]}.
 
     Episodes that are already queued, or already downloaded when skip_existing is on,
@@ -59,7 +59,7 @@ def enqueue(series_name: str, location_id: int, mode: str, quality: str, entries
     locations.get(location_id)
     if mode not in ("sub", "dub"):
         raise QueueError("Mode must be sub or dub.")
-    skip_existing = db.get_setting("skip_existing")
+    skip_existing = always_skip_existing or db.get_setting("skip_existing")
     added, skipped_queued, skipped_existing, batch_ids = 0, 0, 0, []
     for entry in entries:
         episodes = [str(e) for e in entry.get("episodes") or []]
@@ -84,9 +84,9 @@ def enqueue(series_name: str, location_id: int, mode: str, quality: str, entries
             position = conn.execute("SELECT COALESCE(MAX(position), 0) + 1 FROM batches").fetchone()[0]
             batch_id = conn.execute(
                 "INSERT INTO batches (series_name, season, episode_offset, query, result_index, title, mode, quality, "
-                "location_id, position, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "location_id, position, created_by, follow_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (series_name, season, offset, entry["query"], int(entry["index"]), entry["title"], mode, quality or "best",
-                 location_id, position, created_by, now()),
+                 location_id, position, created_by, follow_id, now()),
             ).lastrowid
             for i, episode in enumerate(todo):
                 conn.execute(
@@ -117,6 +117,7 @@ def snapshot() -> list[dict]:
             "title": b["title"],
             "mode": b["mode"], "quality": b["quality"], "location": b["location_name"], "warning": b["warning"],
             "created_at": b["created_at"], "created_by": b["created_by"], "owner": b["owner"] or "",
+            "follow_id": b["follow_id"],
             "items": its, "counts": counts,
             "active": counts["queued"] + counts["running"] > 0,
         })
@@ -196,7 +197,7 @@ def remove_batch(batch_id: int) -> None:
 
 def _next_item():
     return db.query_one(
-        "SELECT items.*, batches.query, batches.result_index, batches.title, batches.mode, batches.quality, "
+        "SELECT items.*, batches.query, batches.result_index, batches.title, batches.mode, batches.quality AS wanted_quality, "
         "batches.series_name, batches.season, batches.episode_offset, batches.location_id FROM items JOIN batches ON batches.id = items.batch_id "
         "WHERE items.status = 'queued' ORDER BY batches.position, batches.id, items.position, items.id LIMIT 1")
 
@@ -228,7 +229,7 @@ async def _download_best(item, index: int, dub: bool, workdir, on_progress,
         offered = await anicli.qualities(item["query"], index, item["episode"], dub)
     except anicli.AniCliError:
         offered = []  # ani-cli picks the best on its own
-    order = anicli.quality_order(offered, item["quality"])
+    order = anicli.quality_order(offered, item["wanted_quality"])
     errors = []
     for attempt, quality in enumerate(order):
         if _cancelled(item_id):
@@ -316,6 +317,23 @@ async def _run_item(item) -> None:
         _running.pop(item_id, None)
         shutil.rmtree(workdir, ignore_errors=True)
         _wake.set()
+
+
+def rescan(batch_id: int) -> int:
+    """Asks the media server again to scan a batch's finished episodes. Returns the folder count."""
+    row = db.query_one("SELECT location_id FROM batches WHERE id = ?", (batch_id,))
+    if not row:
+        raise QueueError("That download doesn't exist.")
+    if not mediaserver.configured():
+        raise QueueError("No media server is set up (Settings → Media server).")
+    dests = [r["dest"] for r in db.query("SELECT dest FROM items WHERE batch_id = ? AND status = 'done' AND dest != ''",
+                                         (batch_id,))]
+    folders = sorted({os.path.dirname(d) for d in dests})
+    if not folders:
+        raise QueueError("Nothing in this download has finished yet.")
+    db.execute("UPDATE batches SET warning = '' WHERE id = ?", (batch_id,))
+    mediaserver.notify(folders, locations.get(row["location_id"]), batch_id)
+    return len(folders)
 
 
 def _after_done(item, video: str | None, location) -> None:

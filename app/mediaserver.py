@@ -151,6 +151,34 @@ async def _scan(kind: str, library_id: str, folders: list[str], whole_library: b
                 await _request("GET", f"/library/sections/{library_id}/refresh", params={"path": folder})
 
 
+def pick_library(libs: list[dict]) -> dict | None:
+    """The library anime most likely lives in: one named like "anime" (a show library
+    first), else the only TV library. None when it's a guess between several."""
+    shows = [l for l in libs if l["type"] in ("tvshows", "show")]
+    for group in (shows, libs):
+        named = [l for l in group if "anime" in (l["name"] or "").lower()]
+        if len(named) == 1:
+            return named[0]
+    return shows[0] if len(shows) == 1 else None
+
+
+async def ensure_library() -> str:
+    """The saved anime library id. If none was saved, choose one the same way the settings
+    page suggests it, save it, and log that it happened."""
+    s = db.get_settings()
+    if s["media_library_id"]:
+        return s["media_library_id"]
+    choice = pick_library(await libraries())
+    if not choice:
+        raise MediaServerError("no anime library is chosen and there's more than one it could be. "
+                               "Pick it under Settings → Media server and press Save")
+    db.set_settings(media_library_id=choice["id"], media_library_name=choice["name"])
+    from . import auth  # imported here: auth doesn't need the media server at import time
+    auth.audit("AniStash", "media_library_auto", f"chose the {choice['name']} library")
+    log.info("No anime library was saved; chose %s", choice["name"])
+    return choice["id"]
+
+
 async def flush() -> None:
     global _library_refresh
     folders, whole_library, batches = sorted(_pending), _library_refresh, sorted(_pending_batches)
@@ -159,15 +187,18 @@ async def flush() -> None:
     _library_refresh = False
     if not folders and not whole_library:
         return
-    s = db.get_settings()
-    kind, library_id = s["media_server"], s["media_library_id"]
+    kind = db.get_setting("media_server")
     try:
-        # Plex scans folders through a library too, so it always needs one chosen
-        if not library_id and (whole_library or kind == "plex"):
-            raise MediaServerError("no anime library is chosen (Settings → Media server), so nothing was scanned")
+        library_id = db.get_setting("media_library_id")
+        # Plex scans folders through a library too, so it always needs one
+        if whole_library or kind == "plex":
+            library_id = await ensure_library()
         await _scan(kind, library_id, folders, whole_library)
         log.info("Asked %s to scan %s", _label(kind),
-                 f"the {s['media_library_name'] or library_id} library" if whole_library else f"{len(folders)} folder(s)")
+                 f"the {db.get_setting('media_library_name') or library_id} library" if whole_library
+                 else f"{len(folders)} folder(s)")
+        for batch_id in batches:
+            db.execute("UPDATE batches SET warning = '' WHERE id = ? AND warning LIKE '%scan failed%'", (batch_id,))
     except MediaServerError as exc:
         # Never fails a download: the batch just shows a warning
         log.warning("%s scan failed: %s", _label(kind), exc)

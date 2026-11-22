@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS batches (
     warning        TEXT NOT NULL DEFAULT '',
     notified       INTEGER NOT NULL DEFAULT 0,
     created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    follow_id      INTEGER REFERENCES follows(id) ON DELETE SET NULL,
     created_at     INTEGER NOT NULL
 );
 
@@ -90,6 +91,35 @@ CREATE TABLE IF NOT EXISTS items (
     quality    TEXT NOT NULL DEFAULT '',          -- the quality actually downloaded
     position   REAL NOT NULL,
     updated_at INTEGER NOT NULL
+);
+
+-- Shows kept up to date automatically: new episodes are queued as they come out
+CREATE TABLE IF NOT EXISTS follows (
+    id                  INTEGER PRIMARY KEY,
+    series_name         TEXT NOT NULL,
+    season              INTEGER NOT NULL,
+    episode_offset      INTEGER NOT NULL DEFAULT 0,
+    query               TEXT NOT NULL,
+    result_index        INTEGER NOT NULL,
+    title               TEXT NOT NULL,
+    mode                TEXT NOT NULL,
+    quality             TEXT NOT NULL,
+    location_id         INTEGER NOT NULL REFERENCES locations(id),
+    created_by          INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    new_seasons         INTEGER NOT NULL DEFAULT 1,   -- also follow the next season when it appears
+    status              TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused')),
+    skip_episodes       TEXT NOT NULL DEFAULT '[]',   -- episodes that existed when "only new" was chosen
+    anilist_id          INTEGER,
+    airing_status       TEXT NOT NULL DEFAULT '',
+    next_episode        INTEGER,
+    next_airing_at      INTEGER,
+    last_checked        INTEGER NOT NULL DEFAULT 0,
+    next_check          INTEGER NOT NULL DEFAULT 0,
+    last_new_at         INTEGER NOT NULL DEFAULT 0,
+    last_seasons_check  INTEGER NOT NULL DEFAULT 0,
+    last_result         TEXT NOT NULL DEFAULT '',
+    created_at          INTEGER NOT NULL,
+    UNIQUE (series_name, title, mode)
 );
 
 CREATE TABLE IF NOT EXISTS cache (
@@ -147,6 +177,7 @@ MIGRATIONS = [
     ("users", "created_at", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "last_login_at", "INTEGER NOT NULL DEFAULT 0"),
     ("batches", "created_by", "INTEGER REFERENCES users(id) ON DELETE SET NULL"),
+    ("batches", "follow_id", "INTEGER REFERENCES follows(id) ON DELETE SET NULL"),
 ]
 
 
