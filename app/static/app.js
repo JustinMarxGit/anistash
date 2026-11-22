@@ -860,15 +860,89 @@ function featureCarousel(feature, items) {
   feature.addEventListener("focusout", () => pause(false));
   const onVisible = () => { if (!feature.isConnected) return document.removeEventListener("visibilitychange", onVisible); feature.classList.toggle("hidden-tab", document.hidden); };
   document.addEventListener("visibilitychange", onVisible);
-  // Swipe on phones
-  let startX = null;
-  feature.addEventListener("touchstart", (e) => { startX = e.touches[0].clientX; }, { passive: true });
-  feature.addEventListener("touchend", (e) => {
-    if (startX === null) return;
-    const dx = e.changedTouches[0].clientX - startX;
-    startX = null;
-    if (Math.abs(dx) > 45) go(current + (dx < 0 ? 1 : -1));
-  }, { passive: true });
+  // Swipe on phones: the banner follows your thumb, lifts and tilts like a picked-up card, and
+  // is thrown off the side when you let go fast or far enough (otherwise it springs back).
+  // The next show rises from underneath as you drag.
+  let drag = null, frame = 0;
+  const neighbour = (dir) => els[(current + dir + els.length) % els.length];
+  const lay = (dx) => {
+    const el = els[current], w = feature.clientWidth, p = Math.min(1, Math.abs(dx) / w);
+    el.style.transform = `translateX(${dx}px) rotate(${(dx / w) * 7}deg) scale(${1 - p * 0.05})`;
+    const under = dx === 0 ? null : neighbour(dx < 0 ? 1 : -1);
+    for (const n of els) {
+      if (n === el) continue;
+      n.classList.toggle("peek", n === under);
+      if (n === under) { n.style.transform = `scale(${0.9 + 0.1 * p})`; n.style.opacity = String(0.35 + 0.65 * p); }
+      else { n.style.transform = ""; n.style.opacity = ""; }
+    }
+  };
+  const settle = (els_, ms, then) => setTimeout(() => {
+    feature.classList.add("instant");
+    then?.();
+    for (const n of els_) { n.style.transform = ""; n.style.transition = ""; n.style.opacity = ""; n.classList.remove("peek"); }
+    requestAnimationFrame(() => requestAnimationFrame(() => feature.classList.remove("instant")));
+    feature.classList.remove("dragging");
+    pause(false);
+  }, ms);
+
+  feature.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" || e.target.closest(".carousel-ui") || drag?.busy) return;
+    drag = { x: e.clientX, y: e.clientY, dx: 0, active: false, samples: [[e.timeStamp, e.clientX]], id: e.pointerId };
+  });
+  feature.addEventListener("pointermove", (e) => {
+    if (!drag || drag.busy || e.pointerId !== drag.id) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.active) {
+      if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { drag = null; return; }  // scrolling the page
+      if (Math.abs(dx) < 8) return;
+      drag.active = true;
+      feature.classList.add("dragging");
+      pause(true);
+      try { feature.setPointerCapture(e.pointerId); } catch { /* synthetic or already released */ }
+    }
+    drag.dx = dx;
+    drag.samples.push([e.timeStamp, e.clientX]);
+    while (drag.samples.length > 2 && e.timeStamp - drag.samples[0][0] > 100) drag.samples.shift();
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => drag && lay(drag.dx));
+  });
+  const release = (e) => {
+    if (!drag || drag.busy || (e && e.pointerId !== drag.id)) return;
+    if (!drag.active) { drag = null; return; }
+    cancelAnimationFrame(frame);
+    const { dx, samples } = drag;
+    const [t0, x0] = samples[0], [t1, x1] = samples[samples.length - 1];
+    const v = t1 > t0 ? (x1 - x0) / (t1 - t0) : 0;  // px per ms, over the last tenth of a second
+    const w = feature.clientWidth, el = els[current];
+    const thrown = Math.abs(dx) > w * 0.28 || (Math.abs(v) > 0.45 && Math.sign(v) === Math.sign(dx));
+    feature.dataset.dragged = String(Date.now());  // the tap that ended the drag isn't a click
+    drag.busy = true;
+    if (thrown) {
+      const dir = dx < 0 ? 1 : -1, under = neighbour(dir);
+      const target = -dir * w * 1.3;
+      // as fast as it was thrown, within reason
+      const ms = Math.round(Math.max(170, Math.min(420, Math.abs(target - dx) / Math.max(Math.abs(v), 1.3))));
+      el.style.transition = `transform ${ms}ms cubic-bezier(.15,.75,.35,1), opacity ${ms}ms ease-in`;
+      el.style.transform = `translateX(${target}px) rotate(${-dir * 16}deg) scale(.92)`;
+      el.style.opacity = "0.4";
+      under.classList.add("peek");
+      under.style.transition = `transform ${ms}ms cubic-bezier(.2,.8,.3,1), opacity ${ms}ms`;
+      under.style.transform = "scale(1)";
+      under.style.opacity = "1";
+      settle([el, under], ms, () => go(current + dir));
+    } else {
+      el.style.transition = "transform .5s cubic-bezier(.34,1.56,.64,1)";
+      el.style.transform = "";
+      for (const n of els) if (n.classList.contains("peek")) { n.style.transition = "transform .4s, opacity .4s"; n.style.transform = "scale(.9)"; n.style.opacity = "0"; }
+      settle(els, 500);
+    }
+    setTimeout(() => { drag = null; }, 520);
+  };
+  feature.addEventListener("pointerup", release);
+  feature.addEventListener("pointercancel", release);
+  feature.addEventListener("click", (e) => {
+    if (Date.now() - Number(feature.dataset.dragged || 0) < 400) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
 }
 
 // The banner's slow zoom only runs while it's on screen

@@ -5,6 +5,13 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "0.10.4",
+        "title": "Flick through the spotlight",
+        "items": ["On phones, the big banner on Browse now follows your thumb: drag it and it lifts and tilts like a "
+                  "card, with the next show waiting underneath. Flick it and it's thrown off the side; let go "
+                  "gently and it springs back."],
+    },
+    {
         "version": "0.10.3",
         "title": "Rank numbers fixed",
         "items": ["Rank numbers 10 and up on Best this season and Trending are no longer cut off behind the "

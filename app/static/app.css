@@ -275,6 +275,13 @@ input::placeholder { color: var(--muted); opacity: .8; }
 .feature .slide { position: absolute; inset: 0; isolation: isolate; display: flex; align-items: flex-end; padding: 22px 22px 58px;
   opacity: 0; visibility: hidden; transition: opacity .9s var(--ease), visibility 0s .9s; }
 .feature .slide.on { opacity: 1; visibility: visible; transition: opacity .9s var(--ease); }
+.feature { touch-action: pan-y; }  /* sideways drags are the carousel's, up/down still scrolls the page */
+.feature .slide { border-radius: inherit; overflow: hidden; transform-origin: 50% 90%; }
+.feature .slide.on { z-index: 1; }
+.feature .slide.peek { opacity: .35; visibility: visible; transition: none; z-index: 0; transform: scale(.9); }
+.feature.dragging .slide.on { transition: none; will-change: transform; box-shadow: 0 28px 60px -18px rgb(0 0 0 / 65%); }
+.feature.dragging .slide.on .bg { animation-play-state: paused; }
+.feature.instant .slide, .feature.instant .slide .slide-text > * { transition: none !important; }
 .feature .bg { position: absolute; inset: 0; z-index: -2; background: var(--surface-2) center 30% / cover no-repeat; transform: scale(1.06); will-change: transform; }
 .feature .slide.on .bg { animation: kenburns 22s ease-in-out infinite alternate; }
 .feature.offscreen .bg { animation-play-state: paused; }
