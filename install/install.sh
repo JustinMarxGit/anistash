@@ -31,6 +31,11 @@ quiet() { if [[ $VERBOSE == 1 ]]; then "$@"; else "$@" >>"$LOG" 2>&1; fi; }
 [[ $PORT =~ ^[0-9]+$ ]] && ((PORT > 0 && PORT < 65536)) || { echo "ANIDL_PORT must be a port number." >&2; exit 1; }
 : >"$LOG"
 
+# Same fixes the community scripts apply: Debian 13 templates can leave / owned by
+# nobody, and /etc without o+x stops apt's _apt user from reading resolv.conf
+[[ "$(stat -c %U /)" == root ]] || chown root:root /
+(( 0$(stat -c %a /etc) & 1 )) || chmod o+x /etc
+
 if [[ -n ${TZ:-} && -f /usr/share/zoneinfo/$TZ ]]; then
     info "Setting timezone to $TZ"
     ln -sf "/usr/share/zoneinfo/$TZ" /etc/localtime

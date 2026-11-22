@@ -25,7 +25,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/JustinMarxGit/anidl/main
 ```
 
 - **Default settings**: Debian, 2 cores, 1 GB RAM, 8 GB disk, DHCP on `vmbr0`. No questions asked.
-- **Advanced settings**: container ID, hostname, password, Debian version, disk, CPU, RAM, storage, bridge, **static IPv4 + gateway**, IPv6, DNS, MAC, VLAN, MTU, SSH, web UI port and timezone. A summary screen shows everything before the container is created.
+- **Advanced settings**: container ID, hostname, password, Debian version, disk, CPU, RAM, storage, bridge, **static IPv4 + gateway**, IPv6, DNS, MAC, VLAN, MTU, SSH, tags (or none), web UI port and timezone. A summary screen shows everything before the container is created.
 
 Every option can also be preset as an environment variable to skip its question. For example:
 
@@ -34,7 +34,7 @@ MODE=advanced CTID=120 NET=192.168.1.50/24 GATE=192.168.1.1 VLAN=20 \
   bash -c "$(curl -fsSL https://raw.githubusercontent.com/JustinMarxGit/anidl/main/ct/anidl.sh)"
 ```
 
-Variables: `MODE CTID HN PW OS_VERSION DISK CORES RAM STORAGE TEMPLATE_STORAGE BRG NET GATE IPV6 GATE6 DNS SD MAC VLAN MTU SSH SSH_KEY PORT TZ VERBOSE`. With `MODE` set, the script runs without any dialogs.
+Variables: `MODE CTID HN PW OS_VERSION DISK CORES RAM STORAGE TEMPLATE_STORAGE BRG NET GATE IPV6 GATE6 DNS SD MAC VLAN MTU SSH SSH_KEY TAGS PORT TZ VERBOSE`. With `MODE` set, the script runs without any dialogs. `TAGS=` (empty) creates the container without any tags.
 
 > The container is **privileged**, because an unprivileged LXC can't mount SMB/NFS shares itself. If you'd rather keep it unprivileged, mount the share on the Proxmox host, bind-mount it into the container, and add it in anidl as a *local folder*.
 

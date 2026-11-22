@@ -8,7 +8,7 @@
 #
 #   MODE=advanced|default  CTID  HN  PW  OS_VERSION  DISK  CORES  RAM  STORAGE  TEMPLATE_STORAGE
 #   BRG  NET (dhcp or IP/CIDR)  GATE  IPV6 (auto|dhcp|none|IP/CIDR)  GATE6  DNS  SD  MAC  VLAN  MTU
-#   SSH (yes|no)  SSH_KEY (path to a public key file)  PORT  TZ  VERBOSE (yes|no)
+#   SSH (yes|no)  SSH_KEY (path to a public key file)  TAGS (a;b, or empty for none)  PORT  TZ  VERBOSE (yes|no)
 #
 #   e.g.  CTID=120 NET=192.168.1.50/24 GATE=192.168.1.1 bash -c "$(curl -fsSL …/ct/anidl.sh)"
 set -Eeuo pipefail
@@ -46,6 +46,7 @@ msg_info() {
 stop_spinner() { [[ -n $spinner_pid ]] && kill "$spinner_pid" 2>/dev/null && wait "$spinner_pid" 2>/dev/null; spinner_pid=""; true; }
 msg_ok() { stop_spinner; printf "\r\e[K %s %s\n" "$CM" "${GN}$1${CL}"; }
 msg_error() { stop_spinner; printf "\r\e[K %s %s\n" "$CROSS" "${RD}$1${CL}"; }
+msg_warn() { stop_spinner; printf "\r\e[K %s %s\n" "${YW}!${CL}" "${YW}$1${CL}"; }
 
 LOG="/tmp/anidl-lxc-$$.log"
 CREATED=""
@@ -92,7 +93,7 @@ preflight() {
 
 # Remembers which options came from the environment, so their dialogs are skipped
 PRESET=" "
-for v in CTID HN PW OS_VERSION DISK CORES RAM STORAGE TEMPLATE_STORAGE BRG NET GATE IPV6 GATE6 DNS SD MAC VLAN MTU SSH SSH_KEY PORT TZ VERBOSE; do
+for v in CTID HN PW OS_VERSION DISK CORES RAM STORAGE TEMPLATE_STORAGE BRG NET GATE IPV6 GATE6 DNS SD MAC VLAN MTU SSH SSH_KEY TAGS PORT TZ VERBOSE; do
     [[ -n ${!v+x} ]] && PRESET+="$v "
 done
 preset() { [[ $PRESET == *" $1 "* ]]; }
@@ -124,6 +125,7 @@ defaults() {
     MTU="${MTU:-}"
     SSH="${SSH:-no}"
     SSH_KEY="${SSH_KEY:-}"
+    TAGS="${TAGS-anidl}"  # set but empty (TAGS=) means no tags
     PORT="${PORT:-8000}"
     TZ="${TZ:-$(cat /etc/timezone 2>/dev/null || timedatectl show -p Timezone --value 2>/dev/null || echo Etc/UTC)}"
     VERBOSE="${VERBOSE:-no}"
@@ -265,6 +267,16 @@ step_app() {
     preset TZ || { ask TZ "Timezone" "Timezone (e.g. Europe/London):" || return 1; }
     [[ -f /usr/share/zoneinfo/$TZ ]] || { bad "Unknown timezone \"$TZ\"."; return 2; }
 }
+step_tags() {
+    preset TAGS && return 0
+    local out
+    out="$(whiptail --backtitle "$BACKTITLE" --title "Container tags" --cancel-button Back --inputbox \
+        "Proxmox tags for this container, separated by semicolons.\nLeave empty for no tags." 11 70 "$TAGS" 3>&1 1>&2 2>&3)" || return 1
+    out="$(tr -d '[:space:]' <<<"$out" | tr ',' ';' | sed 's/;;*/;/g; s/^;//; s/;$//')"
+    local tag_pattern='^[A-Za-z0-9_;-]*$'
+    [[ $out =~ $tag_pattern ]] || { bad "Tags can only contain letters, numbers, - and _ (separate them with ;)."; return 2; }
+    TAGS="$out"
+}
 step_verbose() {
     preset VERBOSE && return 0
     choose VERBOSE "Verbose mode" "Show full apt/pip output while installing?" no "No, show progress only" yes "Yes" || return 1
@@ -272,7 +284,7 @@ step_verbose() {
 
 advanced() {
     local steps=(step_ctid step_hostname step_password step_os step_resources step_storage step_bridge
-        step_ipv4 step_ipv6 step_dns step_link step_ssh step_app step_verbose)
+        step_ipv4 step_ipv6 step_dns step_link step_ssh step_tags step_app step_verbose)
     local i=0 rc
     while ((i < ${#steps[@]})); do
         # Called in a || list so a "back" (non-zero) result doesn't trip the ERR trap
@@ -303,6 +315,7 @@ IPv6:           $net6
 DNS:            ${DNS:-host}${SD:+, search $SD}
 MAC:            ${MAC:-random}
 SSH root login: $SSH
+Tags:           ${TAGS:-none}
 Web UI port:    $PORT
 Timezone:       $TZ
 Type:           privileged (needed to mount SMB/NFS shares from the web UI)
@@ -343,77 +356,141 @@ create_container() {
     local args=(
         --hostname "$HN" --cores "$CORES" --memory "$RAM" --swap 512
         --rootfs "$STORAGE:$DISK" --net0 "$net" --ostype debian
-        --unprivileged 0 --features "nesting=1,mount=nfs;cifs" --onboot 1 --tags anidl
+        --unprivileged 0 --features "nesting=1,mount=nfs;cifs" --onboot 1
         --timezone "$TZ"
     )
+    # Only pass tags when there are any (an empty TAGS means no tags at all)
+    [[ -n $TAGS ]] && args+=(--tags "$TAGS")
     [[ -n $PW ]] && args+=(--password "$PW")
     [[ -n $DNS ]] && args+=(--nameserver "$DNS")
     [[ -n $SD ]] && args+=(--searchdomain "$SD")
     [[ -n $SSH_KEY ]] && args+=(--ssh-public-keys "$SSH_KEY")
 
     msg_info "Creating LXC container $CTID"
+    # pct extracts the template under the caller's umask. A hardened host umask (027)
+    # leaves /etc at 750, and then apt (which resolves names as the _apt user) can't
+    # read resolv.conf. The Proxmox GUI uses 022, so do the same.
+    local prev_umask
+    prev_umask="$(umask)"
+    umask 022
     run pct create "$CTID" "$TEMPLATE_STORAGE:vztmpl/$TEMPLATE" "${args[@]}"
+    umask "$prev_umask"
     CREATED="$CTID"
     msg_ok "Created LXC container ${BL}$CTID${GN} ($HN)"
 
     STEP="starting the container"
     msg_info "Starting the container"
-    run pct start "$CTID"
+    run pct start "$CTID" || [[ "$(pct status "$CTID" 2>/dev/null)" == "status: running" ]]
+    local i
+    for i in {1..10}; do
+        [[ "$(pct status "$CTID" 2>/dev/null)" == "status: running" ]] && break
+        sleep 1
+    done
+    [[ "$(pct status "$CTID" 2>/dev/null)" == "status: running" ]] ||
+        { msg_error "Container $CTID was created but won't start. See: pct start $CTID --debug"; false; }
     msg_ok "Started the container"
-    wait_for_network
+
+    wait_for_ip
+    check_connectivity
+    fix_container_os
+    check_dns
 }
 
-# Runs a command in the container with a hard time limit, so a stuck DNS lookup or
-# a container that isn't ready yet can't hang the script
+# Runs a command in the container with a time limit, so nothing can hang the script
 cexec() { timeout "$1" pct exec "$CTID" -- "${@:2}"; }
 
-# Checks the container's network one layer at a time (address, internet, DNS) so a
-# failure says exactly what is wrong instead of just timing out.
-wait_for_network() {
-    STEP="waiting for the container's network"
-    local deadline=$((SECONDS + ${NET_WAIT:-90})) stage="" shown="" ip=""
-    while ((SECONDS < deadline)); do
-        ip="$(cexec 5 ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | head -n1 || true)"
-        if [[ -z $ip ]]; then
-            stage=address
-        elif ! cexec 6 bash -c '</dev/tcp/1.1.1.1/443' &>/dev/null && ! cexec 6 bash -c '</dev/tcp/8.8.8.8/443' &>/dev/null; then
-            stage=internet
-        elif ! cexec 8 getent hosts github.com &>/dev/null; then
-            stage=dns
-        else
-            msg_ok "Network is up (${ip})"
+# Same approach as the community scripts: poll for an address (IPv4, else IPv6),
+# quickly at first and then less often, for up to about two minutes.
+wait_for_ip() {
+    STEP="waiting for an IP address"
+    msg_info "Waiting for the container network"
+    local i
+    IP=""
+    for i in {1..60}; do
+        IP="$(cexec 10 ip -4 addr show dev eth0 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -n1 || true)"
+        [[ -n $IP ]] || IP="$(cexec 10 ip -6 addr show dev eth0 scope global 2>/dev/null | awk '/inet6 / {print $2}' | cut -d/ -f1 | head -n1 || true)"
+        [[ -n $IP ]] && break
+        if ((i <= 20)); then sleep 1; elif ((i <= 40)); then sleep 2; else sleep 3; fi
+    done
+    if [[ -n $IP ]]; then
+        msg_ok "Network connected: ${BL}$IP"
+        return 0
+    fi
+
+    msg_error "No IP address assigned to container $CTID"
+    local uplinks=0 port link
+    link="$(cexec 10 ip -br link show dev eth0 2>/dev/null | awk '{print $2}' || true)"
+    echo "   Container network: ip=$NET${VLAN:+, VLAN $VLAN}, eth0 ${link:-missing}"
+    if [[ ! -d /sys/class/net/$BRG ]]; then
+        echo "   Bridge $BRG doesn't exist on this host."
+    else
+        for port in /sys/class/net/"$BRG"/brif/*; do
+            [[ -e $port ]] || continue
+            case "${port##*/}" in veth* | tap* | fwpr* | fwln*) ;; *) uplinks=$((uplinks + 1)) ;; esac
+        done
+        ((uplinks)) || echo "   Bridge $BRG has no uplink port, so nothing outside this host can answer on it."
+    fi
+    [[ $NET == dhcp ]] && echo "   No DHCP server answered on $BRG${VLAN:+ (VLAN $VLAN)}. Try a static IP under Advanced settings."
+    echo "   Also check the Proxmox firewall for this container."
+    false
+}
+
+# Ping first because it's fast; fall back to a TCP connect, since many networks drop ping.
+# Like the community scripts, a failure here is only a warning: DNS and apt decide.
+check_connectivity() {
+    STEP="checking internet access"
+    for _ in 1 2 3; do
+        if cexec 10 ping -c 1 -W 2 1.1.1.1 &>/dev/null || cexec 10 ping -c 1 -W 2 8.8.8.8 &>/dev/null ||
+            cexec 10 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443' &>/dev/null || cexec 10 bash -c 'exec 3<>/dev/tcp/8.8.8.8/443' &>/dev/null; then
+            msg_ok "Internet reachable"
             return 0
         fi
-        if [[ $stage != "$shown" ]]; then
-            stop_spinner
-            printf "\r\e[K"
-            case $stage in
-                address) msg_info "Waiting for an IP address ($( [[ $NET == dhcp ]] && echo "DHCP" || echo "$NET"))" ;;
-                internet) msg_info "Got ${ip}; waiting for internet access" ;;
-                dns) msg_info "Internet works; waiting for DNS" ;;
-            esac
-            shown=$stage
-        fi
-        sleep 3
+        sleep 2
     done
+    msg_warn "IP $IP is set but the internet connectivity test failed. Continuing; check gateway ${GATE:-from DHCP} if the install fails."
+}
 
-    msg_error "The container's network isn't working after 90 seconds."
-    case $stage in
-        address)
-            echo -e "   It never got an IPv4 address on bridge ${BL}$BRG${CL}${VLAN:+ (VLAN $VLAN)}."
-            if [[ $NET == dhcp ]]; then
-                echo "   Check that DHCP reaches that bridge, or rerun with Advanced settings and a static IP."
-            else
-                echo "   Check the address $NET and the bridge."
-            fi ;;
-        internet)
-            echo -e "   It has the address ${BL}$ip${CL} but can't reach the internet."
-            echo "   Check the gateway (${GATE:-from DHCP}) and any firewall between the container and the internet." ;;
-        dns)
-            echo "   The internet is reachable but names don't resolve. The container uses:"
-            cexec 5 cat /etc/resolv.conf 2>/dev/null | grep -E '^(nameserver|search)' | sed 's/^/     /' || true
-            echo "   Rerun with Advanced settings and DNS set (e.g. 1.1.1.1), or fix DNS on the Proxmox host." ;;
-    esac
+# Fixes the community scripts apply to every Debian container before installing.
+fix_container_os() {
+    STEP="preparing the container OS"
+    # Debian 13 templates can leave / owned by nobody
+    cexec 20 bash -c '[ "$(stat -c %U /)" = root ] || chown root:root /' >>"$LOG" 2>&1 || true
+    # /etc without o+x stops apt's _apt user from reading resolv.conf
+    cexec 20 bash -c '[ $(( 0$(stat -c %a /etc) & 1 )) -eq 1 ] || chmod o+x /etc' >>"$LOG" 2>&1 || true
+    # Nothing in anidl needs the boot to wait for "network online"
+    cexec 20 systemctl disable -q --now systemd-networkd-wait-online.service >>"$LOG" 2>&1 || true
+}
+
+dns_works() {
+    cexec 30 getent hosts deb.debian.org &>/dev/null && cexec 30 getent hosts github.com &>/dev/null
+}
+
+# If the configured resolver doesn't answer, switch to public resolvers (what the
+# community scripts do) and keep them on the container so they survive reboots.
+check_dns() {
+    STEP="checking DNS"
+    msg_info "Checking DNS"
+    if dns_works; then
+        msg_ok "DNS works"
+        return 0
+    fi
+    local current
+    current="$(cexec 10 awk '/^nameserver/ {print $2}' /etc/resolv.conf 2>/dev/null | paste -sd' ' || true)"
+    msg_warn "DNS lookups fail with ${current:-no nameserver}; switching the container to 8.8.8.8 and 1.1.1.1"
+    cexec 10 bash -c "printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' >/etc/resolv.conf" >>"$LOG" 2>&1 || true
+    pct set "$CTID" --nameserver "8.8.8.8 1.1.1.1" >>"$LOG" 2>&1 || true
+    if dns_works; then
+        msg_ok "DNS works with public resolvers"
+        return 0
+    fi
+    msg_error "DNS still fails inside the container, even with public resolvers."
+    if cexec 20 getent ahostsv4 github.com &>/dev/null; then
+        echo "   IPv4 (A) lookups work but IPv6 (AAAA) lookups time out; your router or firewall is dropping AAAA queries."
+    else
+        echo "   Something between the container and the internet is blocking DNS (UDP/TCP port 53)."
+        echo "   Check the Proxmox firewall, your router's firewall, or DNS filtering such as Pi-hole or AdGuard."
+    fi
+    echo "   Test from the host: pct exec $CTID -- getent hosts github.com"
     false
 }
 
@@ -445,8 +522,11 @@ install_app() {
     run pct exec "$CTID" -- bash -c "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates"
     local verbose=0
     [[ $VERBOSE == yes ]] && verbose=1
+    # Fetched on the host and handed over, like the community scripts do
+    local installer
+    installer="$(curl -fsSL "$RAW/install/install.sh")"
     run pct exec "$CTID" -- env ANIDL_PORT="$PORT" ANIDL_REPO="$REPO" TZ="$TZ" ANIDL_VERBOSE="$verbose" \
-        bash -c "curl -fsSL $RAW/install/install.sh | bash"
+        bash -c "$installer"
     msg_ok "Installed anidl"
 
     STEP="writing the container notes"
