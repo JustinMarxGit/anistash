@@ -785,20 +785,17 @@ select.small { min-height: 36px; padding: 0 .55rem; font-size: .88rem; }
 /* Switching light/dark: the circle that grows from the button */
 ::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
 .theme-wipe { position: fixed; inset: 0; z-index: 9999; pointer-events: none; }
-/* "Drop into water": a clear bead of water in black and white, its shadow, and the splash */
-.water-drop, .drop-shade, .ripples .spray, .ripples .glint { position: fixed; width: 16px; height: 16px; margin: -8px 0 0 -8px;
-  border-radius: 50%; pointer-events: none; }
-.water-drop, .ripples .spray {
-  background: radial-gradient(circle at 34% 30%, rgb(255 255 255 / 95%) 0 9%, rgb(255 255 255 / 0) 24%),
-    radial-gradient(circle at 62% 74%, rgb(255 255 255 / 45%) 0 12%, rgb(255 255 255 / 0) 34%),
-    radial-gradient(circle, rgb(0 0 0 / 4%) 40%, rgb(0 0 0 / 55%) 100%);
-  box-shadow: inset 0 0 0 .5px rgb(0 0 0 / 35%), 0 0 0 .5px rgb(255 255 255 / 40%); }
-.water-drop { z-index: 10001; }
-.drop-shade { z-index: 10000; background: radial-gradient(circle, rgb(0 0 0 / 45%), rgb(0 0 0 / 0) 70%); }
+/* "Drop into water": a cartoon drop with an ink outline, its splash, and the rings it sends out */
+.water-drop, .ripples { --ink: #141414; }
+.water-drop { position: fixed; z-index: 10001; width: 18px; height: 18px; margin: -18px 0 0 -9px; pointer-events: none; transform-origin: 50% 100%; }
+.water-drop::before { content: ""; position: absolute; inset: 0; border-radius: 0 50% 50% 50%; transform: rotate(45deg);
+  background: var(--c); border: 2.5px solid var(--ink); }
+.water-drop::after { content: ""; position: absolute; left: 4px; top: 6px; width: 4px; height: 6px; border-radius: 50%; background: #fff; transform: rotate(20deg); }
 .ripples { position: fixed; inset: 0; z-index: 10000; pointer-events: none; overflow: hidden; view-transition-name: ripples; }
-.ripples .spray, .ripples .glint { position: absolute; }
-.ripples .glint { background: radial-gradient(circle, rgb(255 255 255 / 80%), rgb(255 255 255 / 0) 65%); }
-.ripples .ring { position: absolute; width: 0; height: 0; border-radius: 50%; transform: translate(-50%, -50%); }
+.ripples .spray { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%;
+  background: radial-gradient(circle at 32% 30%, #fff 0 18%, transparent 20%), var(--c); border: 2px solid var(--ink); }
+.ripples .ring { position: absolute; width: 0; height: 0; border-radius: 50%; transform: translate(-50%, -50%);
+  border: var(--w, 5px) solid var(--c); box-shadow: 0 0 0 2px var(--ink), inset 0 0 0 2px var(--ink); }
 ::view-transition-group(ripples), ::view-transition-old(ripples), ::view-transition-new(ripples) { animation: none; }
 
 /* Celebrating a finished download: petals burst from the Downloads tab */

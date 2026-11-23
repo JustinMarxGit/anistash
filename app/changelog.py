@@ -5,6 +5,14 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "1.4.3",
+        "title": "Splash!",
+        "items": [
+            "The light/dark drop is now a cartoon instead of slow motion: an outlined drop stretches as it falls, "
+            "squashes as it lands and splashes, and bold rings roll out across the page and off the edges of the screen.",
+        ],
+    },
+    {
         "version": "1.4.2",
         "title": "Slow motion",
         "items": [
