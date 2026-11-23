@@ -188,14 +188,22 @@ Everything under **Settings → Appearance** is per person, and follows you to e
   and an avatar (top right).
   - Only PNG, JPEG, WebP or GIF are accepted, up to 8 MB for a background and 1 MB for a logo or avatar.
   - They're checked by their contents and stored only on your AniStash.
-- **Text and shapes:** heading and text fonts, text size, sharp/soft/round corners, comfortable or compact spacing,
-  poster size, and frosted glass on or off.
-- **Motion:**
+- **Layout:** put Browse's sections (the big banner, search, genres and each row of posters) in any order, or hide
+  them; a narrow, normal, wide or full-width page; the navigation at the top, bottom or side, with icons, words or
+  both; a top bar that stays or scrolls away; rows that scroll sideways or show every poster; poster titles and the
+  big ranking numbers on or off; a short, normal or tall banner.
+- **Text and shapes:** heading and text fonts, text size, heavy/bold/regular headings, headings in capitals,
+  sharp/soft/round corners, comfortable or compact spacing, poster size, no/soft/strong shadows, no/thin/thick
+  borders, normal/thin/hidden scrollbars, and frosted glass on or off.
+- **Animations** (each one plays in the studio as you pick it, or with *Show me*):
+  - **Speed** of everything (50% to 200%) and its **feel**: smooth, springy, snappy or gentle.
   - **Switching light/dark:** a fade, or instant.
-  - **Changing pages:** slide, fade, zoom or none.
-  - **Hovering a poster:** lift, tilt or glow.
-  - **Behind the page:** paper grain, drifting colour or falling petals.
-  - **Finished downloads:** a petal burst.
+  - **Changing pages:** slide up, slide in, fade, zoom, blur, flip or none.
+  - **Things appearing:** rise, fade, pop, blur, slide or none, one after another as quickly as you like.
+  - **Pointing at a poster:** lift, tilt, zoom, glow or nothing. **Pressing a button:** squish, deep or nothing.
+  - **Windows and messages:** spring, fade or just appear.
+  - **Behind the page:** paper grain, drifting colour, falling petals, snow or twinkling stars, as many as you like.
+  - **Finished downloads:** a burst of petals, confetti or stars.
   - **Reduce motion:** follows your device, or you can set it to always or never. When on, it turns all of the
     above off.
 - **Share & reset:** copy your look as a code for friends, paste someone else's, or go back to the default. Admins

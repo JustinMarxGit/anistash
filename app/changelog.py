@@ -5,6 +5,21 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "2.0.0",
+        "title": "Make it entirely yours",
+        "items": [
+            "Layout: put Browse's sections in any order or hide them (right on the example in the studio, or from a list), "
+            "and choose the page width, where the navigation sits (top, bottom or side) and whether it shows icons, words "
+            "or both, a top bar that stays or scrolls away, rows that scroll or show every poster, titles and ranking "
+            "numbers on or off, and how tall the big banner is.",
+            "Animations: the speed of everything and its feel (smooth, springy, snappy, gentle), seven page changes, six "
+            "ways for things to appear (and how quickly one follows another), five poster hovers, button presses, how "
+            "windows and messages appear, snow and twinkling stars, and bursts of petals, confetti or stars. Each one "
+            "plays in the studio as you pick it, or with Show me.",
+            "Style: heading weight and capitals, shadows, borders and scrollbars.",
+        ],
+    },
+    {
         "version": "1.5.0",
         "title": "The studio",
         "items": [

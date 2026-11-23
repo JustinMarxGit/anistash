@@ -34,11 +34,26 @@ def test_clean_keeps_only_safe_values():
     out = look.clean(raw)
     assert out["mode"] == "dark" and out["corners"] == "round"
     assert out["palette"] == {"combo": 126, "colors": ["#1c4286", "#ebd3a2", "#e2b540", "#000000"], "accent": 0, "tint": 1}
-    assert out["tint"] == 100 and out["font"] == {"heading": "bricolage", "body": "serif", "size": 90}
+    assert out["tint"] == 100 and out["font"] == {"heading": "bricolage", "body": "serif", "size": 90,
+                                                  "weight": "heavy", "case": "normal"}
     assert out["motion"]["toggle"] == "instant" and out["motion"]["ambient"] == "petals" and out["motion"]["celebrate"] is True
     assert out["bg_image"] == {"on": True, "dim": 0, "blur": 24, "fit": "cover"}
     assert "evil" not in out
     assert look.clean("not a look") == look.DEFAULT
+
+
+def test_clean_keeps_a_layout_and_motion_within_bounds():
+    raw = {"layout": {"order": ["trending", "nope", "best", "trending", "<b>"], "hidden": ["search", "evil", 3],
+                      "nav": "side", "shelves": "grid", "width": "100vw"},
+           "motion": {"speed": 900, "stagger": -5, "amount": 12.7, "page": "flip", "easing": "cubic-bezier(9)"},
+           "style": {"shadows": "none", "borders": "url(x)"}}
+    out = look.clean(raw)
+    assert out["layout"]["order"] == ["trending", "best", "feature", "search", "genres", "foryou", "seasonal"]
+    assert out["layout"]["hidden"] == ["search"]
+    assert out["layout"]["nav"] == "side" and out["layout"]["shelves"] == "grid" and out["layout"]["width"] == "normal"
+    assert out["motion"]["speed"] == 200 and out["motion"]["stagger"] == 0 and out["motion"]["amount"] == 12
+    assert out["motion"]["page"] == "flip" and out["motion"]["easing"] == "smooth"
+    assert out["style"] == {"shadows": "none", "borders": "thin", "scrollbars": "normal"}
 
 
 def test_looks_are_per_person_with_a_site_default(isolated):

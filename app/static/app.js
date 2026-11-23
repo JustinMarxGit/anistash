@@ -121,10 +121,24 @@ const icon = (name, cls = "") => `<svg class="i ${cls}" aria-hidden="true"><use 
 const DEFAULT_LOOK = {
   mode: "system", palette: { combo: null, colors: [], accent: 0, tint: -1 }, tint: 55,
   bg_image: { on: false, dim: 45, blur: 0, fit: "cover" },
-  font: { heading: "bricolage", body: "onest", size: 100 },
+  font: { heading: "bricolage", body: "onest", size: 100, weight: "heavy", case: "normal" },
   corners: "soft", density: "comfortable", posters: "m", glass: true,
-  motion: { toggle: "fade", page: "slide", hover: "lift", ambient: "grain", celebrate: true, reduce: "system" },
+  motion: { toggle: "fade", page: "slide", hover: "lift", ambient: "grain", celebrate: true, reduce: "system",
+    easing: "smooth", enter: "rise", press: "squish", popups: "spring", burst: "petals", speed: 100, stagger: 40, amount: 12 },
+  style: { shadows: "soft", borders: "thin", scrollbars: "normal" },
+  layout: { width: "normal", nav: "top", labels: "both", topbar: "sticky", shelves: "row", titles: "show", ranks: "show",
+    feature: "normal", order: ["feature", "search", "genres", "best", "foryou", "trending", "seasonal"], hidden: [] },
   files: { background: "", logo: "", avatar: "" },
+};
+// Browse's sections, which a layout puts in any order (and hides)
+const SECTION_NAMES = { feature: "Big banner", search: "Search bar", genres: "Genres", best: "Best this season",
+  foryou: "Picked for you", trending: "Trending now", seasonal: "This season" };
+// How things move: each easing is [settling, bouncing]
+const EASINGS = {
+  smooth: ["cubic-bezier(.2, .8, .2, 1)", "cubic-bezier(.34, 1.4, .64, 1)"],
+  springy: ["cubic-bezier(.3, 1.3, .5, 1)", "cubic-bezier(.3, 1.9, .5, 1)"],
+  snappy: ["cubic-bezier(.6, 0, .1, 1)", "cubic-bezier(.45, 1.15, .4, 1)"],
+  gentle: ["cubic-bezier(.4, 0, .3, 1)", "cubic-bezier(.4, .9, .4, 1)"],
 };
 // Favourite combinations from Sanzo Wada's "A Dictionary of Color Combinations" (1933); the whole
 // book (348 combinations) is in /static/wada.json
@@ -152,8 +166,15 @@ const TINT_MIX = { "--bg": [.2, .2], "--bg-2": [.24, .22], "--surface": [.08, .1
 const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
 const reducedQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 const clone = (x) => JSON.parse(JSON.stringify(x));
+// A whole look: anything it doesn't have yet (an older look, or a shared code from before an option existed) is the default
+function withDefaults(l) {
+  const out = clone(DEFAULT_LOOK);
+  const plain = (x) => x && typeof x === "object" && !Array.isArray(x);
+  for (const [k, v] of Object.entries(plain(l) ? l : {})) out[k] = plain(v) && plain(out[k]) ? { ...out[k], ...clone(v) } : clone(v);
+  return out;
+}
 let look = clone(DEFAULT_LOOK);
-try { Object.assign(look, JSON.parse(localStorage.getItem("anistash-look") || "{}")); } catch { /* storage blocked */ }
+try { look = withDefaults(JSON.parse(localStorage.getItem("anistash-look") || "{}")); } catch { /* storage blocked */ }
 
 const hexToRgb = (h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
 const rgbToHex = (c) => "#" + c.map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("");
@@ -208,13 +229,21 @@ function lookTokens(l, dark) {
 // Shapes, spacing, fonts and the palette's colours for ambient effects (page and sandbox alike)
 function lookStyle(l) {
   const colors = l.palette.colors.length ? l.palette.colors : ["#e2401f", "#fcb315", "#4f4086"];
+  const [ease, spring] = EASINGS[l.motion.easing] || EASINGS.smooth;
   return { "--display": FONTS[l.font.heading], "--body": FONTS[l.font.body],
-    "--amb1": colors[0], "--amb2": colors[1] || colors[0], "--amb3": colors[2] || colors[1] || colors[0] };
+    "--amb1": colors[0], "--amb2": colors[1] || colors[0], "--amb3": colors[2] || colors[1] || colors[0],
+    "--ease": ease, "--spring": spring, "--stagger": `${l.motion.stagger}ms` };
 }
-const LOOK_DATA = (l) => ({ corners: l.corners, density: l.density, posters: l.posters });
+// Everything else is a data-* attribute that the CSS picks up (on the page, and on the example in the studio)
+const LOOK_DATA = (l) => ({ corners: l.corners, density: l.density, posters: l.posters,
+  width: l.layout.width, navpos: l.layout.nav, labels: l.layout.labels, topbar: l.layout.topbar, shelves: l.layout.shelves,
+  titles: l.layout.titles, ranks: l.layout.ranks, hero: l.layout.feature,
+  shadows: l.style.shadows, borders: l.style.borders, scrollbars: l.style.scrollbars,
+  hweight: l.font.weight, hcase: l.font.case, enter: l.motion.enter, press: l.motion.press, popups: l.motion.popups,
+  speed: String(l.motion.speed) });
 
 function applyLook(next, { fade = false } = {}) {
-  look = { ...clone(DEFAULT_LOOK), ...clone(next) };
+  look = withDefaults(next);
   const root = document.documentElement;
   if (fade && !reduceMotion(look)) {
     root.classList.add("theme-fade");
@@ -238,6 +267,7 @@ function applyLook(next, { fade = false } = {}) {
   paintBackground(look);
   paintAmbient(look);
   paintBrand(look, tokens);
+  requestAnimationFrame(moveNavIndicator);  // the nav may have moved (top, bottom or side)
   const toggle = document.getElementById("theme-toggle");
   if (toggle) {
     toggle.innerHTML = icon(dark ? "sun" : "moon");
@@ -265,22 +295,47 @@ function paintBackground(l) {
 
 function paintAmbient(l) {
   const el = layer("ambient");
-  setAmbient(el, reduceMotion(l) ? "none" : l.motion.ambient);
+  setAmbient(el, reduceMotion(l) ? "none" : l.motion.ambient, l.motion.amount);
 }
 
-// What's behind a page (the real one, or the one in the sandbox): drifting colour or falling petals
-function setAmbient(el, kind) {
-  if (el.dataset.kind === kind) return;
+// What's behind a page (the real one, or the one in the studio): drifting colour, falling petals or
+// snow, or twinkling stars; `amount` is how many petals, flakes or stars
+function setAmbient(el, kind, amount = 12) {
+  const key = `${kind}:${amount}`;
+  if (el.dataset.key === key) return;
+  el.dataset.key = key;
   el.dataset.kind = kind;
   el.innerHTML = "";
+  const colors = ["var(--amb1)", "var(--amb2)", "var(--amb3)"];
+  const r = (lo, hi, digits = 1) => (lo + Math.random() * (hi - lo)).toFixed(digits);
   if (kind === "drift") el.innerHTML = '<i class="blob"></i><i class="blob"></i><i class="blob"></i>';
   if (kind === "petals") {
-    const colors = ["var(--amb1)", "var(--amb2)", "var(--amb3)"];
-    el.innerHTML = Array.from({ length: 12 }, (_, i) => `<i class="petal" style="left:${(i * 8.3 + Math.random() * 6).toFixed(1)}%;
-      --c:${colors[i % 3]};--t:${(11 + Math.random() * 9).toFixed(1)}s;--delay:${(-Math.random() * 18).toFixed(1)}s;
-      --sway:${Math.round(20 + Math.random() * 60) * (i % 2 ? 1 : -1)}px;opacity:${(0.35 + Math.random() * 0.4).toFixed(2)}"></i>`).join("");
+    el.innerHTML = Array.from({ length: amount }, (_, i) => `<i class="petal" style="left:${r(0, 100)}%;
+      --c:${colors[i % 3]};--t:${r(11, 20)}s;--delay:${r(-18, 0)}s;
+      --sway:${Math.round(20 + Math.random() * 60) * (i % 2 ? 1 : -1)}px;opacity:${r(0.35, 0.75, 2)}"></i>`).join("");
+  }
+  if (kind === "snow") {
+    el.innerHTML = Array.from({ length: amount * 2 }, (_, i) => `<i class="flake" style="left:${r(0, 100)}%;--s:${r(3, 8)}px;
+      --t:${r(9, 18)}s;--delay:${r(-18, 0)}s;--sway:${Math.round(10 + Math.random() * 40) * (i % 2 ? 1 : -1)}px;opacity:${r(0.4, 0.9, 2)}"></i>`).join("");
+  }
+  if (kind === "stars") {
+    el.innerHTML = Array.from({ length: amount * 2 }, (_, i) => `<i class="star" style="left:${r(0, 100)}%;top:${r(0, 100)}%;
+      --c:${colors[i % 3]};--s:${r(2, 5)}px;--t:${r(2.5, 6)}s;--delay:${r(-6, 0)}s"></i>`).join("");
   }
 }
+
+// Speeds every animation up or slows it down (Appearance → Animations → Speed). The example in the
+// studio has its own speed; the few animations that keep time with something else are left alone
+const UNTIMED = new Set(["dot-fill", "spin", "shimmer", "stripes", "slide"]);
+function retime(e) {
+  const host = e.target.closest?.("[data-speed]") || document.documentElement;
+  const rate = Number(host.dataset.speed || 100) / 100;
+  for (const a of e.target.getAnimations?.() || []) {
+    if (!UNTIMED.has(a.animationName) && a.playbackRate !== rate) a.playbackRate = rate;
+  }
+}
+document.addEventListener("animationstart", retime, true);
+document.addEventListener("transitionrun", retime, true);
 
 // The logo (your own picture, or the seal in your colour), the browser-tab icon and your avatar
 function paintBrand(l, tokens) {
@@ -328,14 +383,14 @@ function toggleMode() {
 function celebrate() {
   if (!look.motion.celebrate || reduceMotion(look)) return;
   const from = document.querySelector('[data-nav="downloads"]')?.getBoundingClientRect();
-  if (from) burst(from);
+  if (from) burst(from, look.motion.burst);
 }
-function burst(from) {
+function burst(from, style = "petals") {
   const colors = ["var(--amb1)", "var(--amb2)", "var(--amb3)", "var(--accent)"];
   for (let i = 0; i < 18; i++) {
     const p = document.createElement("i");
     const angle = (Math.PI * 2 * i) / 18 + Math.random() * 0.3, dist = 60 + Math.random() * 90;
-    p.className = "burst";
+    p.className = `burst ${style}`;
     p.style.cssText = `left:${from.left + from.width / 2}px;top:${from.top + from.height / 2}px;--c:${colors[i % 4]};
       --x:${Math.cos(angle) * dist}px;--y:${Math.sin(angle) * dist - 40}px;--r:${Math.round(Math.random() * 540)}deg`;
     document.body.append(p);
@@ -964,8 +1019,10 @@ function moveNavIndicator() {
   if (!ind) return;
   if (!active || nav.hidden) { ind.style.opacity = "0"; return; }
   ind.style.opacity = "1";
-  ind.style.transform = `translateX(${active.offsetLeft}px)`;
+  const side = getComputedStyle(nav).flexDirection === "column";  // the nav on the side runs top to bottom
+  ind.style.transform = side ? `translate(${active.offsetLeft}px, ${active.offsetTop - ind.offsetTop}px)` : `translateX(${active.offsetLeft}px)`;
   ind.style.width = `${active.offsetWidth}px`;
+  ind.style.height = side ? `${active.offsetHeight}px` : "";
 }
 window.addEventListener("resize", moveNavIndicator);
 window.addEventListener("scroll", () => document.body.classList.toggle("scrolled", window.scrollY > 4), { passive: true });
@@ -1231,25 +1288,29 @@ function pauseOffscreen(el) {
 }
 
 async function browseView() {
-  view.innerHTML = `
-    <section class="feature" id="feature"><div class="bg skel"></div></section>
-    <form class="searchbar" id="quick">${icon("search", "lead")}
-      <input type="search" id="q" placeholder="Search anime by English or Japanese name" enterkeyhint="search" aria-label="Search anime"></form>
-    <div class="section-head"><h2>Browse by genre</h2>
+  // Each person puts Browse's sections in their own order, and can hide any of them (Appearance → Layout)
+  const sections = {
+    feature: `<section class="feature" id="feature"><div class="bg skel"></div></section>`,
+    search: `<form class="searchbar" id="quick">${icon("search", "lead")}
+      <input type="search" id="q" placeholder="Search anime by English or Japanese name" enterkeyhint="search" aria-label="Search anime"></form>`,
+    genres: `<div class="section-head"><h2>Browse by genre</h2>
       <div class="row"><button class="small" id="surprise">${icon("dice")}<span>Surprise me</span></button>
         ${shelfNav("genre-row").replace('class="shelf-nav"', 'class="shelf-nav always"')}</div></div>
-    <div class="chips-row" id="genre-row">${'<span class="chip skel" style="width:84px">&nbsp;</span>'.repeat(8)}</div>
-    <div class="section-head"><h2>Best this season</h2>${shelfNav("best")}</div>
-    <p class="hint shelf-hint" id="best-sources"></p>
-    <div class="shelf ranked" id="best">${skeletonPosters(6)}</div>
-    <div class="section-head"><h2>Picked for you</h2>${shelfNav("foryou")}</div>
-    <p class="hint shelf-hint" id="foryou-hint"></p>
-    <div class="shelf" id="foryou">${skeletonPosters(6)}</div>
-    <div class="section-head"><h2>Trending now</h2>${shelfNav("trending")}</div>
-    <div class="shelf ranked" id="trending">${skeletonPosters(8)}</div>
-    <div class="section-head"><h2>This season</h2></div>
-    <div class="posters" id="seasonal">${skeletonPosters(12)}</div>`;
-  $("#quick").addEventListener("submit", (e) => {
+      <div class="chips-row" id="genre-row">${'<span class="chip skel" style="width:84px">&nbsp;</span>'.repeat(8)}</div>`,
+    best: `<div class="section-head"><h2>Best this season</h2>${shelfNav("best")}</div>
+      <p class="hint shelf-hint" id="best-sources"></p>
+      <div class="shelf ranked" id="best">${skeletonPosters(6)}</div>`,
+    foryou: `<div class="section-head"><h2>Picked for you</h2>${shelfNav("foryou")}</div>
+      <p class="hint shelf-hint" id="foryou-hint"></p>
+      <div class="shelf" id="foryou">${skeletonPosters(6)}</div>`,
+    trending: `<div class="section-head"><h2>Trending now</h2>${shelfNav("trending")}</div>
+      <div class="shelf ranked" id="trending">${skeletonPosters(8)}</div>`,
+    seasonal: `<div class="section-head"><h2>This season</h2></div>
+      <div class="posters" id="seasonal">${skeletonPosters(12)}</div>`,
+  };
+  const shown = look.layout.order.filter((id) => sections[id] && !look.layout.hidden.includes(id));
+  view.innerHTML = shown.map((id) => sections[id]).join("") || `<p class="muted">Every section of Browse is hidden. Show some again in Settings → Appearance.</p>`;
+  $("#quick")?.addEventListener("submit", (e) => {
     e.preventDefault();
     const value = $("#q").value.trim();
     if (value) location.hash = `#/search?q=${encodeURIComponent(value)}`;
@@ -1257,7 +1318,7 @@ async function browseView() {
   for (const b of $$("[data-shelf]")) {
     b.addEventListener("click", () => { const shelf = $(`#${b.dataset.for}`); shelf.scrollBy({ left: Number(b.dataset.shelf) * shelf.clientWidth * .8, behavior: "smooth" }); });
   }
-  $("#surprise").addEventListener("click", (e) => surprise(e.currentTarget));
+  $("#surprise")?.addEventListener("click", (e) => surprise(e.currentTarget));
   genreList().then((genres) => {
     const row = $("#genre-row");
     if (!row) return;
@@ -1299,14 +1360,20 @@ async function browseView() {
   }).catch(() => { $("#foryou")?.remove(); });
 
   trending.then(({ items, error }) => {
-    const shelf = $("#trending"), feature = $("#feature");
+    const shelf = $("#trending"), feature = $("#feature");  // the banner shows what's trending too
+    if (!items.length) {
+      if (shelf) shelf.outerHTML = `<p class="muted">${esc(error || "Nothing to show.")}</p>`;
+      feature?.remove();
+      return;
+    }
+    if (feature) {
+      featureCarousel(feature, items);
+      pauseOffscreen(feature);
+    }
     if (!shelf) return;
-    if (!items.length) { shelf.outerHTML = `<p class="muted">${esc(error || "Nothing to show.")}</p>`; feature.remove(); return; }
-    featureCarousel(feature, items);
     shelf.innerHTML = items.slice(0, 10).map((m, k) => posterCard(m, k, { rank: k + 1 })).join("")
       + items.slice(10).map((m, k) => posterCard(m, k + 10)).join("");
     lazyImages(shelf, shelf);
-    pauseOffscreen(feature);
   }).catch((e) => { const el = $("#trending"); if (el) el.outerHTML = `<p class="muted">${esc(e.message)}</p>`; });
 
   seasonal.then(({ items, error }) => {
@@ -2726,15 +2793,24 @@ const toggleBox = (path, label) => `<label class="check"><input type="checkbox" 
 
 // The parts of the example page you can change, and the settings each one opens
 const LOOK_PARTS = [
-  ["colours", "Colours"], ["background", "Background"], ["text", "Text"], ["posters", "Posters"],
-  ["cards", "Cards & corners"], ["logo", "Logo & avatar"], ["mode", "Light or dark"], ["motion", "Moving around"],
+  ["layout", "Layout"], ["colours", "Colours"], ["animations", "Animations"], ["background", "Background"], ["text", "Text"],
+  ["posters", "Posters"], ["cards", "Cards & surfaces"], ["nav", "Navigation"], ["logo", "Logo & avatar"], ["mode", "Light or dark"],
 ];
 const FONT_NAMES = { bricolage: "Bricolage Grotesque", onest: "Onest", system: "Your device's font", serif: "Serif",
   rounded: "Rounded", mono: "Monospace" };
 const fontSelect = (path, label) => `<label class="field"><span>${label}</span><select data-set="${path}">${Object.keys(FONTS).map((f) =>
   `<option value="${f}" style="font-family:${esc(FONTS[f])}">${FONT_NAMES[f]}</option>`).join("")}</select></label>`;
+// A heading in a pop-up, with a button that shows the animation again
+const played = (title, path) => `<h4 class="with-play">${title}<button type="button" class="small ghost play" data-play="${path}">${icon("play")}Show me</button></h4>`;
 
 const PART_SETTINGS = {
+  layout: () => `
+    <p class="muted small">Put Browse's sections in your own order, or hide the ones you don't use. Each section of the example
+      has the same buttons.</p>
+    <div class="sec-list" id="sec-list"></div>
+    <h4>Page width</h4>${seg("layout.width", [["narrow", "Narrow"], ["normal", "Normal"], ["wide", "Wide"], ["full", "Full"]])}
+    <h4>Big banner</h4>${seg("layout.feature", [["short", "Short"], ["normal", "Normal"], ["tall", "Tall"]])}
+    <h4>Scrollbars</h4>${seg("style.scrollbars", [["normal", "Normal"], ["thin", "Thin"], ["hidden", "Hidden"]])}`,
   colours: () => `
     <p class="muted small">From Sanzo Wada's <i>A Dictionary of Color Combinations</i> (1933). Each one colours the buttons
       <i>and</i> the background.</p>
@@ -2754,15 +2830,38 @@ const PART_SETTINGS = {
       <label class="color-pick"><input type="color" id="own-accent"><span>Buttons &amp; highlights</span></label>
       <label class="color-pick"><input type="color" id="own-tint"><span>Background</span></label></div>
     <p class="hint">Very light or dark colours are adjusted a little so text stays readable.</p>`,
+  animations: () => `
+    ${range("motion.speed", 50, 200, "Speed", "%")}
+    <h4>Feel</h4>${seg("motion.easing", [["smooth", "Smooth"], ["springy", "Springy"], ["snappy", "Snappy"], ["gentle", "Gentle"]])}
+    ${played("Changing pages", "motion.page")}${seg("motion.page", [["slide", "Slide up"], ["side", "Slide in"], ["fade", "Fade"],
+      ["zoom", "Zoom"], ["blur", "Blur"], ["flip", "Flip"], ["none", "None"]])}
+    ${played("Things appearing", "motion.enter")}${seg("motion.enter", [["rise", "Rise"], ["fade", "Fade"], ["pop", "Pop"],
+      ["blur", "Blur"], ["slide", "Slide"], ["none", "None"]])}
+    ${range("motion.stagger", 0, 120, "One after another, every", " ms")}
+    ${played("Pointing at a poster", "motion.hover")}${seg("motion.hover", [["lift", "Lift"], ["tilt", "Tilt"], ["zoom", "Zoom"],
+      ["glow", "Glow"], ["none", "Nothing"]])}
+    ${played("Pressing a button", "motion.press")}${seg("motion.press", [["squish", "Squish"], ["deep", "Deep"], ["none", "Nothing"]])}
+    ${played("Windows and messages", "motion.popups")}${seg("motion.popups", [["spring", "Spring"], ["fade", "Fade"], ["none", "Just appear"]])}
+    <h4>Behind the page</h4>${seg("motion.ambient", [["grain", "Paper grain"], ["drift", "Drifting colour"], ["petals", "Petals"],
+      ["snow", "Snow"], ["stars", "Stars"], ["none", "Nothing"]])}
+    ${range("motion.amount", 4, 40, "How many petals, flakes or stars")}
+    ${played("When a download finishes", "motion.burst")}${toggleBox("motion.celebrate", "A burst")}
+    ${seg("motion.burst", [["petals", "Petals"], ["confetti", "Confetti"], ["stars", "Stars"]])}
+    <h4>Switching light and dark</h4>${seg("motion.toggle", [["fade", "Fade"], ["instant", "Instant"]])}
+    <h4>Reduce motion</h4>${seg("motion.reduce", [["system", "Like my device"], ["always", "Always"], ["never", "Never"]])}
+    <p class="hint">Reduced motion turns every animation off, including the ones behind the page.</p>`,
   background: () => `
     <div class="uploads">${uploadTile("background", "Background picture", "Up to 8 MB")}</div>
     ${toggleBox("bg_image.on", "Show my background picture")}
     ${range("bg_image.dim", 0, 90, "Dim", "%")}${range("bg_image.blur", 0, 24, "Blur", "px")}
     <h4>Fit</h4>${seg("bg_image.fit", [["cover", "Fill the screen"], ["tile", "Tile"]])}
-    <h4>Behind the page</h4>${seg("motion.ambient", [["grain", "Paper grain"], ["drift", "Drifting colour"], ["petals", "Falling petals"], ["none", "Nothing"]])}`,
+    <h4>Behind the page</h4>${seg("motion.ambient", [["grain", "Paper grain"], ["drift", "Drifting colour"], ["petals", "Petals"],
+      ["snow", "Snow"], ["stars", "Stars"], ["none", "Nothing"]])}`,
   text: () => `
     <div class="grid2">${fontSelect("font.heading", "Headings")}${fontSelect("font.body", "Text")}</div>
     ${range("font.size", 90, 125, "Text size", "%")}
+    <h4>Headings</h4>${seg("font.weight", [["heavy", "Heavy"], ["bold", "Bold"], ["regular", "Regular"]])}
+    <div style="margin-top:.4rem">${seg("font.case", [["normal", "Normal"], ["upper", "CAPITALS"]])}</div>
     <h4>Show titles in</h4>
     <div class="segmented" role="group" aria-label="Title language">
       <button type="button" data-setlang="en" class="${titleLang() === "en" ? "on" : ""}">English</button>
@@ -2770,12 +2869,22 @@ const PART_SETTINGS = {
     <p class="hint">Search finds shows by either name, whichever you pick.</p>`,
   posters: () => `
     <h4>Size</h4>${seg("posters", [["s", "Small"], ["m", "Medium"], ["l", "Large"]])}
-    <h4>When you point at one</h4>${seg("motion.hover", [["lift", "Lift"], ["tilt", "Tilt"], ["glow", "Glow"], ["none", "Nothing"]])}`,
+    <h4>Rows of posters</h4>${seg("layout.shelves", [["row", "Scroll sideways"], ["grid", "Show them all"]])}
+    <h4>Titles under posters</h4>${seg("layout.titles", [["show", "Show"], ["hide", "Hide"]])}
+    <h4>Big numbers on ranked rows</h4>${seg("layout.ranks", [["show", "Show"], ["hide", "Hide"]])}
+    ${played("When you point at one", "motion.hover")}${seg("motion.hover", [["lift", "Lift"], ["tilt", "Tilt"], ["zoom", "Zoom"],
+      ["glow", "Glow"], ["none", "Nothing"]])}`,
   cards: () => `
     <h4>Corners</h4>${seg("corners", [["sharp", "Sharp"], ["soft", "Soft"], ["round", "Round"]])}
     <h4>Spacing</h4>${seg("density", [["comfortable", "Comfortable"], ["compact", "Compact"]])}
-    <h4>Glass</h4>${toggleBox("glass", "Frosted glass on bars and windows")}
-    <h4>When a download finishes</h4>${toggleBox("motion.celebrate", "A burst of petals")}`,
+    <h4>Shadows</h4>${seg("style.shadows", [["none", "None"], ["soft", "Soft"], ["strong", "Strong"]])}
+    <h4>Borders</h4>${seg("style.borders", [["none", "None"], ["thin", "Thin"], ["thick", "Thick"]])}
+    <h4>Glass</h4>${toggleBox("glass", "Frosted glass on bars and windows")}`,
+  nav: () => `
+    <h4>Where it sits</h4>${seg("layout.nav", [["top", "Top"], ["bottom", "Bottom"], ["side", "Side"]])}
+    <h4>Show</h4>${seg("layout.labels", [["both", "Icons and words"], ["icons", "Icons"], ["text", "Words"]])}
+    <h4>The bar at the top</h4>${seg("layout.topbar", [["sticky", "Stays on screen"], ["static", "Scrolls away"]])}
+    <p class="hint">On phones the navigation always sits at the bottom, where your thumb is.</p>`,
   logo: () => `
     <div class="uploads">${uploadTile("logo", "Logo", "Top left and browser tab · up to 1 MB")}${uploadTile("avatar", "Avatar", "Top right · up to 1 MB")}</div>
     <p class="hint">PNG, JPEG, WebP or GIF. Only you see them (unless an admin makes their look the default).</p>`,
@@ -2783,10 +2892,6 @@ const PART_SETTINGS = {
     ${seg("mode", [["system", "Match device"], ["light", "Light"], ["dark", "Dark"]])}
     <h4>When you switch</h4>${seg("motion.toggle", [["fade", "Fade"], ["instant", "Instant"]])}
     <p class="hint">How the page changes when you press ${icon("moon")} at the top.</p>`,
-  motion: () => `
-    <h4>Changing pages</h4>${seg("motion.page", [["slide", "Slide up"], ["fade", "Fade"], ["zoom", "Zoom"], ["none", "None"]])}
-    <h4>Reduce motion</h4>${seg("motion.reduce", [["system", "Like my device"], ["always", "Always"], ["never", "Never"]])}
-    <p class="hint">Reduced motion turns every animation off, including the ones behind the page.</p>`,
   share: () => `
     <div class="pop-actions col"><button type="button" class="small" id="look-export">Copy my look as a code</button>
       <button type="button" class="small" id="look-import">Paste a look code</button>
@@ -2798,28 +2903,26 @@ const PART_SETTINGS = {
 const comboButton = (n) => `<button type="button" class="combo" data-combo="${n}" data-tip="${esc(`No. ${n}: ${comboNames(wadaBook, n).join(", ")}`)}">${stripe(wadaBook.combos[n].map((i) => wadaBook.colors[i][1]))}<small>No. ${n}</small></button>`;
 let wadaBook = null;
 
-// An example page of AniStash showing a look. In the studio, press any part of it to change that part
+// An example page of AniStash showing a look: Browse, laid out the way the look says. In the studio,
+// press any part of it to change that part; each section has buttons to move or hide it
 function studioPage(live) {
   const hot = (part, tip) => live ? `data-edit="${part}" data-tip="${tip}"` : "";
   const h = live ? "hot" : "";
+  const tabs = [["browse", "Browse"], ["compass", "Discover"], ["search", "Search"], ["download", "Downloads"], ["settings", "Settings"]];
   return `<div class="sandbox studio-page" ${live ? 'id="studio-page"' : 'aria-hidden="true"'}>
     <div class="sb-bg"></div><div class="sb-ambient" aria-hidden="true"></div>
     <div class="sb-top">
       <span class="sb-logo ${h}" ${hot("logo", "Change the logo")}></span><b class="sb-brand">anistash</b>
-      <span class="sb-nav ${h}" ${hot("motion", "How pages change")}><i class="on">Browse</i><i>Discover</i><i>Search</i><i>Downloads</i><i>Settings</i></span>
+      <span class="sb-nav ${h}" ${hot("nav", "Where the navigation sits")}>${tabs.map(([ic, name], i) =>
+        `<i class="${i ? "" : "on"}">${icon(ic)}<span>${name}</span></i>`).join("")}</span>
       <span class="sb-mode ${h}" ${hot("mode", "Light or dark")}></span>
       <span class="sb-me ${h}" ${hot("logo", "Change your avatar")}></span>
     </div>
     <div class="sb-body ${h}" ${hot("background", "Change the background")}>
-      <div class="sb-main">
-        <div class="sb-text ${h}" ${hot("text", "Change the fonts and text size")}><h3>Best this season</h3>
-          <p class="muted">Twelve new shows started this week. These are the ones fans love most.</p></div>
-        <div class="sb-posters ${h}" ${hot("posters", "Poster size and what they do when you point at them")}>${Array.from({ length: 12 }, (_, i) =>
-          `<span class="sb-poster"><b>${i + 1}</b></span>`).join("")}</div>
-        <div class="sb-actions ${h}" ${hot("colours", "Change the colours")}>
-          <span class="chip on">Fantasy</span><span class="chip">Drama</span><span class="chip">Comedy</span><span class="pill accent">Downloading</span>
-          <span class="btn primary small">${icon("download")}Download</span><span class="btn small">${icon("star")}Follow</span></div>
-        <div class="sb-cards ${h}" ${hot("cards", "Corners, spacing and glass")}>
+      <div class="sb-main"></div>
+      <div class="sb-elsewhere">
+        <p class="sb-label">On the Downloads page</p>
+        <div class="sb-cards ${h}" ${hot("cards", "Cards, shadows, borders and glass")}>
           <div class="card sb-card"><b>Frieren · S01</b><div class="muted small">6 of 12 episodes · Sub + Dub</div>
             <div class="progress live" style="margin-top:.45rem"><i style="width:55%"></i></div></div>
           <div class="card sb-card"><b>The Apothecary Diaries · S02</b><div class="muted small">Waiting · 3 episodes · Sub</div>
@@ -2831,13 +2934,67 @@ function studioPage(live) {
   </div>`;
 }
 
+// Browse's sections on the example page, in the look's order
+function studioSections(l, live) {
+  const hot = (part, tip) => live ? `class="hot" data-edit="${part}" data-tip="${tip}"` : "";
+  const heading = (text) => `<h2 ${hot("text", "Change the fonts and text size")}>${text}</h2>`;
+  const posters = (from, count, ranked) => `<div class="sb-row ${ranked ? "ranked" : ""} ${live ? "hot" : ""}" ${live
+    ? 'data-edit="posters" data-tip="Poster size, rows and what they do when you point at them"' : ""}>${Array.from({ length: count }, (_, i) =>
+    `<span class="sb-pc">${ranked ? `<span class="sb-rank">${i + 1}</span>` : ""}<span class="sb-pw"><span class="sb-poster" data-n="${from + i}"></span>
+      <span class="sb-name" data-name="${from + i}">&nbsp;</span></span></span>`).join("")}</div>`;
+  const body = {
+    feature: `<div class="sb-hero ${live ? "hot" : ""}" ${live ? 'data-edit="layout" data-tip="The big banner"' : ""}>
+        <span class="sb-hero-bg"></span><div class="sb-hero-text"><span class="sb-eyebrow">#1 trending</span>
+        <b class="sb-hero-title" data-name="0">&nbsp;</b>
+        <div class="sb-actions ${live ? "hot" : ""}" ${live ? 'data-edit="colours" data-tip="Change the colours"' : ""}>
+          <span class="btn primary small">${icon("download")}Download</span><span class="btn small glass">${icon("star")}Follow</span></div></div></div>`,
+    search: `<div class="sb-search ${live ? "hot" : ""}" ${live ? 'data-edit="cards" data-tip="Cards, shadows, borders and glass"' : ""}>
+        ${icon("search")}<span>Search anime by English or Japanese name</span></div>`,
+    genres: `${heading("Browse by genre")}<div class="sb-actions ${live ? "hot" : ""}" ${live ? 'data-edit="colours" data-tip="Change the colours"' : ""}>
+        <span class="chip on">Fantasy</span><span class="chip">Drama</span><span class="chip">Comedy</span><span class="chip">Romance</span>
+        <span class="pill accent">New</span><span class="btn small">${icon("dice")}Surprise me</span></div>`,
+    best: `${heading("Best this season")}${posters(0, 8, true)}`,
+    foryou: `${heading("Picked for you")}${posters(8, 8, false)}`,
+    trending: `${heading("Trending now")}${posters(4, 8, true)}`,
+    seasonal: `${heading("This season")}${posters(12, 12, false).replace('class="sb-row', 'class="sb-row grid')}`,
+  };
+  const visible = l.layout.order.filter((id) => !l.layout.hidden.includes(id));
+  return l.layout.order.map((id) => {
+    const off = l.layout.hidden.includes(id);
+    if (off && !live) return "";
+    const at = visible.indexOf(id);
+    const tools = live ? `<span class="sec-tools"><b>${SECTION_NAMES[id]}</b>
+      <button type="button" data-move="${id}" data-dir="-1" aria-label="Move ${SECTION_NAMES[id]} up" ${at === 0 ? "disabled" : ""}>${icon("up")}</button>
+      <button type="button" data-move="${id}" data-dir="1" aria-label="Move ${SECTION_NAMES[id]} down" ${at === visible.length - 1 ? "disabled" : ""}>${icon("down")}</button>
+      <button type="button" class="label" data-hide="${id}">Hide</button></span>` : "";
+    if (off) return `<section class="sb-sec off" data-sec="${id}"><span>${SECTION_NAMES[id]} is hidden</span>
+      <button type="button" class="small" data-hide="${id}">Show</button></section>`;
+    return `<section class="sb-sec" data-sec="${id}" data-sec-${id}>${tools}${body[id]}</section>`;
+  }).join("");
+}
+
 // Shows a look on an example page, in light or dark
 function paintFrame(frame, l, dark) {
-  const still = reduceMotion(l);
+  const still = reduceMotion(l), live = frame.id === "studio-page";
   for (const [k, v] of Object.entries({ ...lookTokens(l, dark), ...lookStyle(l) })) frame.style.setProperty(k, v);
   frame.style.setProperty("--fs", String(l.font.size / 100));
   Object.assign(frame.dataset, LOOK_DATA(l), { hover: still ? "none" : l.motion.hover, page: still ? "none" : l.motion.page,
     glass: l.glass ? "on" : "off" });
+  // The sections, in the look's order (they glide to their new places when that changes)
+  const key = JSON.stringify([l.layout.order, l.layout.hidden]);
+  if (frame.dataset.sections !== key) {
+    const main = frame.querySelector(".sb-main");
+    const before = new Map([...main.querySelectorAll(".sb-sec")].map((el) => [el.dataset.sec, el.getBoundingClientRect().top]));
+    main.innerHTML = studioSections(l, live);
+    frame.dataset.sections = key;
+    fillPosters(frame);
+    if (live && before.size && !still) {
+      for (const el of main.querySelectorAll(".sb-sec")) {
+        const was = before.get(el.dataset.sec), dy = was === undefined ? 0 : was - el.getBoundingClientRect().top;
+        if (dy) el.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 450, easing: EASINGS.smooth[1] });
+      }
+    }
+  }
   const bg = frame.querySelector(".sb-bg"), url = l.files?.background;
   const on = l.bg_image.on && url;
   bg.style.backgroundImage = on ? `url(${JSON.stringify(url)})` : "";
@@ -2846,16 +3003,27 @@ function paintFrame(frame, l, dark) {
   bg.style.backgroundRepeat = l.bg_image.fit === "tile" ? "repeat" : "no-repeat";
   bg.style.setProperty("--dim", String(l.bg_image.dim / 100));
   bg.classList.toggle("on", Boolean(on));
-  setAmbient(frame.querySelector(".sb-ambient"), still ? "none" : l.motion.ambient);
+  setAmbient(frame.querySelector(".sb-ambient"), still ? "none" : l.motion.ambient, l.motion.amount);
   frame.querySelector(".sb-logo").innerHTML = l.files?.logo
     ? `<img src="${esc(l.files.logo)}" alt="">` : '<svg aria-hidden="true"><use href="#logo"/></svg>';
   frame.querySelector(".sb-me").innerHTML = l.files?.avatar
     ? `<img src="${esc(l.files.avatar)}" alt="">` : esc((status?.user?.username || "?").slice(0, 1).toUpperCase());
   frame.querySelector(".sb-mode").innerHTML = icon(dark ? "sun" : "moon");
 }
-const fillPosters = (frame) => browseList("/api/browse/trending").then(({ items }) => {
-  frame.querySelectorAll(".sb-poster").forEach((el, i) => { if (items[i]?.cover) el.style.backgroundImage = `url(${JSON.stringify(items[i].cover)})`; });
-}).catch(() => {});
+// Real posters and titles on the example page, once Browse has them
+let studioShows = [];
+function fillPosters(frame) {
+  const fill = () => {
+    if (!studioShows.length) return;
+    const show = (n) => studioShows[n % studioShows.length];
+    for (const el of frame.querySelectorAll("[data-n]")) if (show(el.dataset.n).cover) el.style.backgroundImage = `url(${JSON.stringify(show(el.dataset.n).cover)})`;
+    for (const el of frame.querySelectorAll("[data-name]")) el.textContent = showTitle(show(el.dataset.name));
+    const hero = frame.querySelector(".sb-hero-bg"), top = studioShows[0];
+    if (hero) hero.style.backgroundImage = `url(${JSON.stringify(top.banner || top.cover || "")})`;
+  };
+  if (studioShows.length) return fill();
+  browseList("/api/browse/trending").then(({ items }) => { studioShows = items.filter((m) => m.cover); fill(); }).catch(() => {});
+}
 
 // Settings → Appearance: a window onto your own AniStash. Step inside and it opens up into a whole
 // second AniStash (the studio) where pressing anything changes how it looks
@@ -2866,8 +3034,9 @@ function appearanceSection() {
       <span class="launch-screen">${studioPage(false)}</span>
       <span class="launch-cta">${icon("palette")}Step inside</span></button>
     <div class="launch-text"><h2>Make it yours</h2>
-      <p class="muted">Step into a second AniStash and press anything (the colours, posters, text, background, logo) to
-        change how it looks. Nothing changes out here until you press <b>Use this look</b>.</p></div>
+      <p class="muted">Step into a second AniStash and make it yours: put Browse in your own order, move the navigation, pick
+        the colours, fonts, posters and backgrounds, and choose how everything moves. Press any part of it to change it.
+        Nothing changes out here until you press <b>Use this look</b>.</p></div>
   </div>`;
 }
 function bindLaunch() {
@@ -3015,11 +3184,30 @@ async function bindAppearance(world) {
       $(`[data-remove="${kind}"]`, pane).hidden = !myFiles[kind];
     }
     $("#draft-bar", pane).hidden = same();
+    const list = $("#sec-list", pane);
+    if (list) list.innerHTML = draft.layout.order.map((id, i) => {
+      const off = draft.layout.hidden.includes(id);
+      return `<div class="sec-row ${off ? "off" : ""}"><span class="grow">${SECTION_NAMES[id]}</span>
+        <button type="button" class="small icon" data-move="${id}" data-dir="-1" aria-label="Move ${SECTION_NAMES[id]} up" ${i ? "" : "disabled"}>${icon("up")}</button>
+        <button type="button" class="small icon" data-move="${id}" data-dir="1" aria-label="Move ${SECTION_NAMES[id]} down" ${i < draft.layout.order.length - 1 ? "" : "disabled"}>${icon("down")}</button>
+        <button type="button" class="small ${off ? "primary" : "ghost"}" data-hide="${id}">${off ? "Show" : "Hide"}</button></div>`;
+    }).join("");
     const source = $("#look-source", pane);
     if (source) source.textContent = saved.own ? "You're using your own look."
       : "You're using the site's default look. Anything you use here becomes your own.";
   }
-  const refresh = () => { paintSandbox(); paintControls(); if (open && !open.at) place(); };
+  const refresh = () => {
+    paintSandbox();
+    paintControls();
+    if (!open) return;
+    if (!open.anchor.isConnected) {  // the sections were redrawn: point at the same part again
+      open.anchor = partAnchor(open.id);
+      open.anchor.classList.add("editing");
+    }
+    if (!open.at) place();
+  };
+  // Where a part's settings pop out from when you pick it from the dock
+  const partAnchor = (id) => $(`[data-edit="${id}"]`, frame) || frame.querySelector(".sb-top");
   const change = (fn) => { fn(); refresh(); };
 
   // The settings pop out of the part you pressed: just under it, or, for the background, where you pressed
@@ -3046,6 +3234,7 @@ async function bindAppearance(world) {
     const box = scroller.getBoundingClientRect(), wide = anchor.classList.contains("sb-body");  // the background is the whole page
     open = { id, anchor, at: wide && e?.clientX ? { x: e.clientX - box.left, y: e.clientY - box.top + scroller.scrollTop } : null };
     for (const chip of $$("[data-open]", pane)) chip.classList.toggle("on", chip.dataset.open === id);
+    frame.classList.toggle("arranging", id === "layout");  // every section shows its buttons
     $("#look-pop-title", pane).textContent = LOOK_PARTS.find(([k]) => k === id)?.[1] || "Share & reset";
     $(".look-pop-body", pop).innerHTML = PART_SETTINGS[id]();
     pop.classList.remove("wide", "in");
@@ -3056,12 +3245,16 @@ async function bindAppearance(world) {
     void pop.offsetWidth;  // start the pop-out again
     pop.classList.add("in");
     pop.focus({ preventScroll: true });
-    const r = pop.getBoundingClientRect(), dock = $(".studio-dock", world).getBoundingClientRect().top;
-    if (r.bottom > dock - 12) scroller.scrollBy({ top: Math.min(r.bottom - dock + 24, r.top - 80), behavior: "smooth" });
+    // Scroll it into view if it doesn't fit (measured from its place on the page, not mid pop-out)
+    const shift = scroller.getBoundingClientRect().top - scroller.scrollTop, dock = $(".studio-dock", world).getBoundingClientRect().top;
+    const top = shift + pop.offsetTop, bottom = top + pop.offsetHeight;
+    if (bottom > dock - 12) scroller.scrollBy({ top: Math.min(bottom - dock + 24, top - 80), behavior: "smooth" });
+    else if (top < 70) scroller.scrollBy({ top: top - 80, behavior: "smooth" });
   }
   function closePart() {
     if (!open) return;
     open.anchor.classList.remove("editing");
+    frame.classList.remove("arranging");
     for (const chip of $$("[data-open]", pane)) chip.classList.remove("on");
     open = null;
     pop.hidden = true;
@@ -3089,22 +3282,49 @@ async function bindAppearance(world) {
     leaveStudio();
   };
 
-  // Show what a motion setting does, right away
+  // Show what an animation setting does, right away, on the example
+  const again = (el, cls) => { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); };
   function demo(path) {
-    if (path === "motion.page" || path === "motion.reduce") {
+    if (reduceMotion(draft)) return;
+    if (["motion.page", "motion.speed", "motion.easing"].includes(path)) {
       const nav = [...frame.querySelectorAll(".sb-nav i")], at = nav.findIndex((i) => i.classList.contains("on"));
       nav.forEach((i, n) => i.classList.toggle("on", n === (at + 1) % nav.length));
-      const main = frame.querySelector(".sb-main");
-      main.classList.remove("enter");
-      void main.offsetWidth;
-      main.classList.add("enter");
+      again(frame.querySelector(".sb-main"), "enter");
+    }
+    if (path === "motion.enter" || path === "motion.stagger") {
+      frame.querySelectorAll(".sb-sec:not(.off)").forEach((el, i) => { el.style.setProperty("--i", i); again(el, "again"); });
     }
     if (path === "motion.hover") {
       const poster = frame.querySelectorAll(".sb-poster")[1];
-      poster.classList.add("demo");
-      setTimeout(() => poster.classList.remove("demo"), 900);
+      poster?.classList.add("demo");
+      setTimeout(() => poster?.classList.remove("demo"), 900);
     }
-    if (path === "motion.celebrate" && draft.motion.celebrate && !reduceMotion(draft)) burst(frame.querySelector(".sb-card").getBoundingClientRect());
+    if (path === "motion.press") {
+      const button = frame.querySelector(".btn.primary");
+      button?.classList.add("pressed");
+      setTimeout(() => button?.classList.remove("pressed"), 220);
+    }
+    if (path === "motion.popups") {
+      frame.querySelector(".sb-toast")?.remove();
+      const note = document.createElement("div");
+      note.className = "sb-toast";
+      note.textContent = "Frieren · Episode 7 is downloaded";
+      frame.append(note);
+      setTimeout(() => note.remove(), 2600);
+    }
+    if ((path === "motion.celebrate" || path === "motion.burst") && draft.motion.celebrate) {
+      burst(frame.querySelector(".sb-card").getBoundingClientRect(), draft.motion.burst);
+    }
+  }
+  // Moves a section of Browse up or down. On the example, it moves past hidden sections (you can't see them there)
+  function moveSection(id, dir, pastHidden) {
+    const order = draft.layout.order, hidden = draft.layout.hidden;
+    const at = order.indexOf(id);
+    let to = at + dir;
+    while (pastHidden && hidden.includes(order[to])) to += dir;
+    if (to < 0 || to >= order.length) return;
+    order.splice(at, 1);
+    order.splice(to, 0, id);
   }
 
   function drawBook() {
@@ -3125,11 +3345,18 @@ async function bindAppearance(world) {
   }
 
   pane.addEventListener("click", (e) => {
+    const tool = e.target.closest("[data-move], [data-hide], [data-play]");
+    if (tool && pane.contains(tool)) {
+      if (tool.dataset.play) return demo(tool.dataset.play);
+      if (tool.dataset.move) return change(() => moveSection(tool.dataset.move, Number(tool.dataset.dir), !pop.contains(tool)));
+      const id = tool.dataset.hide, hidden = draft.layout.hidden;
+      return change(() => { draft.layout.hidden = hidden.includes(id) ? hidden.filter((x) => x !== id) : [...hidden, id]; });
+    }
     const part = e.target.closest("[data-edit]");
     if (part && !pop.contains(part)) return openPart(part.dataset.edit, part, e);
     const t = e.target.closest("button");
     if (!t || !pane.contains(t)) return;
-    if (t.dataset.open) return openPart(t.dataset.open, $(`[data-edit="${t.dataset.open}"]`, frame));
+    if (t.dataset.open) return openPart(t.dataset.open, partAnchor(t.dataset.open));
     if (t.dataset.sbmode) return change(() => { dark = t.dataset.sbmode === "dark"; });
     if (t.dataset.close !== undefined) return closePart();
     if (t.dataset.set && t.dataset.value !== undefined) {
@@ -3179,8 +3406,10 @@ async function bindAppearance(world) {
     if (!el.dataset.set || el.matches("button")) return;
     change(() => setPath(draft, el.dataset.set, el.dataset.num !== undefined ? Number(el.value)
       : el.dataset.bool !== undefined ? el.checked : el.value));
-    demo(el.dataset.set);
+    if (el.type !== "range") demo(el.dataset.set);
   });
+  // Sliders show what they do once you let go
+  pane.addEventListener("change", (e) => { if (e.target.type === "range" && e.target.dataset.set) demo(e.target.dataset.set); });
   pane.addEventListener("change", async (e) => {
     const input = e.target.closest("[data-upload]");
     if (!input?.files?.[0]) return;
@@ -3262,7 +3491,7 @@ async function bindAppearance(world) {
     if (!code) return;
     try {
       const parsed = JSON.parse(decodeURIComponent(escape(atob(code.trim()))));
-      change(() => { draft = { ...clone(DEFAULT_LOOK), ...parsed, files: draft.files }; dark = wantsDark(draft); });
+      change(() => { draft = { ...withDefaults(parsed), files: draft.files }; dark = wantsDark(draft); });
       toast("Look loaded into the example. Press Use this look to keep it");
     } catch { toast("That code doesn't look right.", true); }
   }
@@ -3538,7 +3767,7 @@ async function auditPanel(container) {
 // section opens on its own (with a way back); on a wide screen the list stays beside it.
 const SETTINGS_SECTIONS = [
   { id: "updates", icon: "spark", title: "Updates", desc: "Check for and install new versions", admin: true },
-  { id: "appearance", icon: "palette", title: "Appearance", desc: "Light or dark, colours, titles" },
+  { id: "appearance", icon: "palette", title: "Appearance", desc: "Layout, colours, animations and more" },
   { id: "downloads", icon: "download", title: "Downloads", desc: "Sub or dub, quality, naming", admin: true },
   { id: "account", icon: "user", title: "Your account", desc: "Password, devices, watch history" },
   { id: "storage", icon: "drive", title: "Storage", desc: "Where downloads are saved", admin: true },

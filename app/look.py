@@ -22,16 +22,39 @@ CHOICES = {
     ("posters",): ("m", "s", "l"),
     ("bg_image", "fit"): ("cover", "tile"),
     ("motion", "toggle"): ("fade", "instant"),
-    ("motion", "page"): ("slide", "fade", "zoom", "none"),
-    ("motion", "hover"): ("lift", "tilt", "glow", "none"),
-    ("motion", "ambient"): ("grain", "drift", "petals", "none"),
+    ("motion", "page"): ("slide", "fade", "zoom", "side", "blur", "flip", "none"),
+    ("motion", "hover"): ("lift", "tilt", "glow", "zoom", "none"),
+    ("motion", "ambient"): ("grain", "drift", "petals", "snow", "stars", "none"),
     ("motion", "reduce"): ("system", "always", "never"),
+    ("motion", "easing"): ("smooth", "springy", "snappy", "gentle"),
+    ("motion", "enter"): ("rise", "fade", "pop", "blur", "slide", "none"),
+    ("motion", "press"): ("squish", "deep", "none"),
+    ("motion", "popups"): ("spring", "fade", "none"),
+    ("motion", "burst"): ("petals", "confetti", "stars"),
+    ("font", "weight"): ("heavy", "bold", "regular"),
+    ("font", "case"): ("normal", "upper"),
+    ("style", "shadows"): ("soft", "strong", "none"),
+    ("style", "borders"): ("thin", "thick", "none"),
+    ("style", "scrollbars"): ("normal", "thin", "hidden"),
+    ("layout", "width"): ("normal", "narrow", "wide", "full"),
+    ("layout", "nav"): ("top", "bottom", "side"),
+    ("layout", "labels"): ("both", "icons", "text"),
+    ("layout", "topbar"): ("sticky", "static"),
+    ("layout", "shelves"): ("row", "grid"),
+    ("layout", "titles"): ("show", "hide"),
+    ("layout", "ranks"): ("show", "hide"),
+    ("layout", "feature"): ("normal", "short", "tall"),
 }
+# The sections of Browse, in their default order; a layout can reorder and hide them
+SECTIONS = ("feature", "search", "genres", "best", "foryou", "trending", "seasonal")
 NUMBERS = {
     ("tint",): (0, 100),
     ("font", "size"): (90, 125),
     ("bg_image", "dim"): (0, 90),
     ("bg_image", "blur"): (0, 24),
+    ("motion", "speed"): (50, 200),     # % of normal speed
+    ("motion", "stagger"): (0, 120),    # ms between things appearing one after another
+    ("motion", "amount"): (4, 40),      # how many petals, snowflakes or stars
 }
 FLAGS = {("glass",), ("bg_image", "on"), ("motion", "celebrate")}
 
@@ -42,13 +65,18 @@ DEFAULT = {
     "palette": {"combo": None, "colors": [], "accent": 0, "tint": -1},
     "tint": 55,
     "bg_image": {"on": False, "dim": 45, "blur": 0, "fit": "cover"},
-    "font": {"heading": "bricolage", "body": "onest", "size": 100},
+    "font": {"heading": "bricolage", "body": "onest", "size": 100, "weight": "heavy", "case": "normal"},
     "corners": "soft",
     "density": "comfortable",
     "posters": "m",
     "glass": True,
     "motion": {"toggle": "fade", "page": "slide", "hover": "lift", "ambient": "grain", "celebrate": True,
-               "reduce": "system"},
+               "reduce": "system", "easing": "smooth", "enter": "rise", "press": "squish", "popups": "spring",
+               "burst": "petals", "speed": 100, "stagger": 40, "amount": 12},
+    "style": {"shadows": "soft", "borders": "thin", "scrollbars": "normal"},
+    "layout": {"width": "normal", "nav": "top", "labels": "both", "topbar": "sticky", "shelves": "row",
+               "titles": "show", "ranks": "show", "feature": "normal",
+               "order": list(SECTIONS), "hidden": []},
 }
 
 
@@ -83,6 +111,12 @@ def clean(raw) -> dict:
         value = _get(raw, path)
         if isinstance(value, bool):
             _set(out, path, value)
+    layout = raw.get("layout")
+    if isinstance(layout, dict):
+        order = [x for x in layout.get("order") or [] if x in SECTIONS]
+        order = list(dict.fromkeys(order))  # no repeats
+        out["layout"]["order"] = order + [x for x in SECTIONS if x not in order]
+        out["layout"]["hidden"] = [x for x in SECTIONS if x in (layout.get("hidden") or [])]
     palette = raw.get("palette")
     if isinstance(palette, dict):
         colors = [c.lower() for c in palette.get("colors") or [] if isinstance(c, str) and HEX.fullmatch(c.lower())][:4]
