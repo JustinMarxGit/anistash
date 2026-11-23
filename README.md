@@ -24,9 +24,9 @@ It runs in its own Proxmox LXC, created with one command, and works on phones as
 | --- | --- | --- |
 | ![Discover](docs/screenshots/discover.jpg) | ![Anime page](docs/screenshots/anime-page.jpg) | ![Show page](docs/screenshots/show-page.jpg) |
 
-| Downloads | Make it yours: the sandbox | Settings on a phone |
+| Downloads | Make it yours: the studio | Settings on a phone |
 | --- | --- | --- |
-| ![Downloads](docs/screenshots/downloads.jpg) | ![Appearance: the sandbox](docs/screenshots/settings-desktop.jpg) | ![Settings on a phone](docs/screenshots/settings-phone.jpg) |
+| ![Downloads](docs/screenshots/downloads.jpg) | ![Appearance: the studio, a second AniStash you change by pressing its parts](docs/screenshots/settings-desktop.jpg) | ![Settings on a phone](docs/screenshots/settings-phone.jpg) |
 
 **Contents:** [Features](#features) · [Requirements](#requirements) · [Install](#install) · [Setup](#setup) ·
 [Discover](#discover) · [Recommendations](#recommendations) · [Following shows](#following-shows) ·
@@ -67,7 +67,8 @@ It runs in its own Proxmox LXC, created with one command, and works on phones as
   - **Motion:** animations for changing pages, hovering posters (lift, 3D tilt, glow) and switching light/dark (a
     fade or instant), plus drifting colour or falling petals behind the page and a burst
     of petals when a download finishes.
-  - **Try before you use it:** a sandbox shows your look in light and dark before you keep it.
+  - **The studio:** step inside and a second AniStash opens up over the whole screen. Press its posters, colours,
+    text, background or logo, and the settings for just that part pop out beside it.
   - **Share it:** looks can be shared as a code. Admins can make theirs the default for everyone, including the
     login page.
 - **Settings that are easy to find:** grouped into sections (Updates, Appearance, Downloads, Storage, Media server,
@@ -170,8 +171,12 @@ Every site is optional. If one is down, the others still rank the shows, and the
 
 Everything under **Settings → Appearance** is per person, and follows you to every device you sign in on.
 
-- **Sandbox:** a small copy of AniStash in light and dark shows your changes as you make them. Nothing changes for
-  real until you press **Use this look**, and **Undo** forgets the changes.
+- **The studio:** Appearance shows a window onto your own AniStash. **Step inside** and it opens up into a second,
+  full-size AniStash over the whole screen. Press any part of it (the colours, background, text, posters, cards, logo,
+  the light/dark button or the navigation) and a small pop-up with the settings for that part grows out of it. A dock
+  at the bottom has the same parts as chips, light or dark for the example, *Share & reset*, and **Use this look**.
+  Nothing changes for real until you press it, and **Back** (or Esc, or the browser's back button) takes you out
+  again, asking first if you have changes you haven't used.
 - **Colours:** pick one of the curated combinations from Sanzo Wada's *A Dictionary of Color Combinations*, browse
   the whole book (348 combinations, filtered by number of colours or searched by colour name), or press *Surprise
   me*.

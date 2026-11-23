@@ -264,7 +264,12 @@ function paintBackground(l) {
 }
 
 function paintAmbient(l) {
-  const el = layer("ambient"), kind = reduceMotion(l) ? "none" : l.motion.ambient;
+  const el = layer("ambient");
+  setAmbient(el, reduceMotion(l) ? "none" : l.motion.ambient);
+}
+
+// What's behind a page (the real one, or the one in the sandbox): drifting colour or falling petals
+function setAmbient(el, kind) {
   if (el.dataset.kind === kind) return;
   el.dataset.kind = kind;
   el.innerHTML = "";
@@ -323,7 +328,9 @@ function toggleMode() {
 function celebrate() {
   if (!look.motion.celebrate || reduceMotion(look)) return;
   const from = document.querySelector('[data-nav="downloads"]')?.getBoundingClientRect();
-  if (!from) return;
+  if (from) burst(from);
+}
+function burst(from) {
   const colors = ["var(--amb1)", "var(--amb2)", "var(--amb3)", "var(--accent)"];
   for (let i = 0; i < 18; i++) {
     const p = document.createElement("i");
@@ -579,14 +586,14 @@ const TIPS = [
   ['#again', "Pick another random anime"],
   ['[data-go="-1"]', "Previous show"],
   ['[data-go="1"]', "Next show"],
-  ['.dot', "Jump to this show"],
-  ['.chip', "Show anime of this genre"],
+  ['.carousel-ui .dot', "Jump to this show"],
+  ['.chip:not(.studio-page .chip)', "Show anime of this genre"],
   ['[data-sort="rated"]', "Best scored by fans first"],
   ['[data-sort="newest"]', "Most recently started first"],
   ['#find', "Look this show up on the anime site to pick seasons and episodes to download"],
   ['#theme-toggle', "Switch between light and dark"],
   ['[data-set="mode"][data-value="system"]', "Follow your device: light by day, dark at night if your device does that"],
-  ['.combo', "Try this combination from Sanzo Wada's book in the sandbox"],
+  ['.combo', "Try this combination from Sanzo Wada's book in the example"],
   ['#book-open', "See all 348 combinations from the book"],
   ['#shuffle', "Try a random combination from the book"],
   ['[data-role="accent"]', "Use this colour for buttons and highlights"],
@@ -595,6 +602,7 @@ const TIPS = [
   ['#look-undo', "Forget the changes and go back to the look you have"],
   ['#look-export', "Copy a code that recreates your look, to share it"],
   ['#look-import', "Try a look someone shared with you"],
+  ['#studio-share', "Share your look as a code, or go back to the default"],
   ['#look-reset', "Use the site's default look again"],
   ['#look-default', "Use your look for everyone who hasn't chosen their own, and the login page"],
   ['#me-btn', "Your account"],
@@ -875,6 +883,7 @@ async function route() {
   pagePoll = null;
   document.querySelector(".actionbar")?.remove();
   document.querySelector(".sheet-backdrop")?.remove();
+  dropStudio();
   const name = location.hash.replace(/^#\/?/, "").split("?")[0];
   try {
     status = await api("/api/status");
@@ -2715,106 +2724,239 @@ const range = (path, min, max, label, unit = "") => `<label class="field range">
   <input type="range" min="${min}" max="${max}" data-set="${path}" data-num></label>`;
 const toggleBox = (path, label) => `<label class="check"><input type="checkbox" data-set="${path}" data-bool> ${label}</label>`;
 
-function sandboxFrame(mode) {
-  return `<div class="sandbox" data-sb="${mode}">
-    <div class="sb-bg"></div>
-    <div class="sb-top"><span class="sb-logo"></span><b class="sb-brand">anistash</b>
-      <span class="sb-nav"><i class="on">Browse</i><i>Discover</i><i>Downloads</i></span></div>
-    <div class="sb-body">
-      <h3>Best this season</h3>
-      <div class="sb-posters">${[0, 1, 2, 3].map((i) => `<span class="sb-poster" data-i="${i}"><b>${i + 1}</b></span>`).join("")}</div>
-      <div class="row" style="gap:.4rem"><span class="chip on">Fantasy</span><span class="chip">Drama</span><span class="pill accent">Downloading</span></div>
-      <div class="card sb-card"><b>Frieren · S01</b><div class="muted small">6 of 12 episodes · Sub + Dub</div>
-        <div class="progress live" style="margin-top:.45rem"><i style="width:55%"></i></div></div>
-      <div class="row" style="gap:.4rem"><span class="btn primary small">${icon("download")}Download</span><span class="btn small">${icon("star")}Follow</span></div>
-      <p class="muted small" style="margin:.4rem 0 0">Text on your background, and <a>a link</a>.</p>
-    </div>
-  </div>`;
-}
-
-function appearanceSection() {
-  return `
-  <div class="look-editor" id="appearance">
-    <div class="card sandbox-card">
-      <div class="section-head" style="margin:0 0 .6rem"><h2 style="margin:0">Sandbox</h2>
-        <span class="muted small">Try things here first. Nothing changes until you press <b>Use this look</b>.</span></div>
-      <div class="sandboxes">${sandboxFrame("light")}${sandboxFrame("dark")}</div>
-      <div class="draft-bar" id="draft-bar" hidden><span class="grow">You've changed things you haven't used yet.</span>
-        <button type="button" class="small ghost" id="look-undo">Undo</button>
-        <button type="button" class="small primary" id="look-use">${icon("check")}Use this look</button></div>
-    </div>
-
-    <div class="card"><h2>Light or dark</h2>
-      ${seg("mode", [["system", "Match device"], ["light", "Light"], ["dark", "Dark"]])}
-      <h3>When you switch</h3>
-      ${seg("motion.toggle", [["fade", "Fade"], ["instant", "Instant"]])}
-      <p class="hint">How the page changes when you press ${icon("moon")} at the top.</p></div>
-
-    <div class="card"><h2>Colours</h2>
-      <p class="muted small">From Sanzo Wada's <i>A Dictionary of Color Combinations</i> (1933). Each combination colours the buttons
-        <i>and</i> the background.</p>
-      <div class="combos" id="curated">${loading()}</div>
-      <div class="row" style="margin:.7rem 0"><button type="button" class="small" id="book-open">${icon("browse")}Browse the whole book</button>
-        <button type="button" class="small" id="shuffle">${icon("dice")}Surprise me</button>
-        <button type="button" class="small ghost" id="brand-colours">AniStash's own colours</button></div>
-      <div id="roles"></div>
-      ${range("tint", 0, 100, "Background colour strength", "%")}
-      <h3>Your own colours</h3>
-      <div class="row own-colours">
-        <label class="color-pick"><input type="color" id="own-accent"><span>Buttons &amp; highlights</span></label>
-        <label class="color-pick"><input type="color" id="own-tint"><span>Background</span></label>
-      </div>
-      <p class="hint">Very light or dark colours are adjusted a little so text stays readable.</p></div>
-
-    <div class="card"><h2>Background picture</h2>
-      <div class="uploads">${uploadTile("background", "Background", "Up to 8 MB")}</div>
-      ${toggleBox("bg_image.on", "Show my background picture")}
-      ${range("bg_image.dim", 0, 90, "Dim", "%")}${range("bg_image.blur", 0, 24, "Blur", "px")}
-      ${seg("bg_image.fit", [["cover", "Fill the screen"], ["tile", "Tile"]])}</div>
-
-    <div class="card"><h2>Logo &amp; avatar</h2>
-      <div class="uploads">${uploadTile("logo", "Logo", "Top left and browser tab · up to 1 MB")}${uploadTile("avatar", "Avatar", "Top right · up to 1 MB")}</div>
-      <p class="hint">PNG, JPEG, WebP or GIF. Only you see them (unless an admin makes their look the default).</p></div>
-
-    <div class="card"><h2>Text &amp; shapes</h2>
-      <div class="grid2">
-        <label class="field"><span>Headings</span><select data-set="font.heading">${Object.keys(FONTS).map((f) =>
-          `<option value="${f}" style="font-family:${esc(FONTS[f])}">${FONT_NAMES[f]}</option>`).join("")}</select></label>
-        <label class="field"><span>Text</span><select data-set="font.body">${Object.keys(FONTS).map((f) =>
-          `<option value="${f}" style="font-family:${esc(FONTS[f])}">${FONT_NAMES[f]}</option>`).join("")}</select></label>
-      </div>
-      ${range("font.size", 90, 125, "Text size", "%")}
-      <h3>Corners</h3>${seg("corners", [["sharp", "Sharp"], ["soft", "Soft"], ["round", "Round"]])}
-      <h3>Spacing</h3>${seg("density", [["comfortable", "Comfortable"], ["compact", "Compact"]])}
-      <h3>Posters</h3>${seg("posters", [["s", "Small"], ["m", "Medium"], ["l", "Large"]])}
-      ${toggleBox("glass", "Frosted glass on bars and windows")}</div>
-
-    <div class="card"><h2>Motion</h2>
-      <h3>Changing pages</h3>${seg("motion.page", [["slide", "Slide up"], ["fade", "Fade"], ["zoom", "Zoom"], ["none", "None"]])}
-      <h3>Hovering a poster</h3>${seg("motion.hover", [["lift", "Lift"], ["tilt", "Tilt"], ["glow", "Glow"], ["none", "None"]])}
-      <h3>Behind the page</h3>${seg("motion.ambient", [["grain", "Paper grain"], ["drift", "Drifting colour"], ["petals", "Falling petals"], ["none", "Nothing"]])}
-      ${toggleBox("motion.celebrate", "Burst of petals when a download finishes")}
-      <h3>Reduce motion</h3>${seg("motion.reduce", [["system", "Like my device"], ["always", "Always"], ["never", "Never"]])}
-      <p class="hint">Reduced motion turns all of the above off.</p></div>
-
-    <div class="card"><h2>Show titles in</h2>
-      <div class="segmented" role="group" aria-label="Title language">
-        <button type="button" data-setlang="en" class="${titleLang() === "en" ? "on" : ""}">English</button>
-        <button type="button" data-setlang="ja" class="${titleLang() === "ja" ? "on" : ""}">Japanese (romaji)</button>
-      </div>
-      <p class="hint">Search finds shows by either name, whichever you pick.</p></div>
-
-    <div class="card"><h2>Share &amp; reset</h2>
-      <div class="row"><button type="button" class="small" id="look-export">Copy my look as a code</button>
-        <button type="button" class="small" id="look-import">Paste a look code</button>
-        <button type="button" class="small ghost" id="look-reset">Go back to the default look</button>
-        ${can.admin() ? `<button type="button" class="small" id="look-default">Make my look everyone's default</button>` : ""}</div>
-      <p class="hint" id="look-source"></p></div>
-  </div>`;
-}
-
+// The parts of the example page you can change, and the settings each one opens
+const LOOK_PARTS = [
+  ["colours", "Colours"], ["background", "Background"], ["text", "Text"], ["posters", "Posters"],
+  ["cards", "Cards & corners"], ["logo", "Logo & avatar"], ["mode", "Light or dark"], ["motion", "Moving around"],
+];
 const FONT_NAMES = { bricolage: "Bricolage Grotesque", onest: "Onest", system: "Your device's font", serif: "Serif",
   rounded: "Rounded", mono: "Monospace" };
+const fontSelect = (path, label) => `<label class="field"><span>${label}</span><select data-set="${path}">${Object.keys(FONTS).map((f) =>
+  `<option value="${f}" style="font-family:${esc(FONTS[f])}">${FONT_NAMES[f]}</option>`).join("")}</select></label>`;
+
+const PART_SETTINGS = {
+  colours: () => `
+    <p class="muted small">From Sanzo Wada's <i>A Dictionary of Color Combinations</i> (1933). Each one colours the buttons
+      <i>and</i> the background.</p>
+    <div class="combos" id="curated">${CURATED.map((n) => comboButton(n)).join("")}</div>
+    <div class="row pop-actions"><button type="button" class="small" id="book-open">${icon("browse")}The whole book</button>
+      <button type="button" class="small" id="shuffle">${icon("dice")}Surprise me</button>
+      <button type="button" class="small ghost" id="brand-colours">AniStash's own</button></div>
+    <div id="book" hidden>
+      <div class="row" style="margin-bottom:.5rem"><div class="segmented" role="group">${[["", "All"], ["2", "2 colours"], ["3", "3"], ["4", "4"]]
+        .map(([v, l]) => `<button type="button" data-size="${v}" class="${v ? "" : "on"}">${l}</button>`).join("")}</div>
+        <input type="search" id="book-find" placeholder="Find a colour, e.g. Cossack Green" style="flex:1;min-width:160px"></div>
+      <div class="combos book" id="book-grid"></div></div>
+    <div id="roles"></div>
+    ${range("tint", 0, 100, "Background colour strength", "%")}
+    <h4>Your own colours</h4>
+    <div class="row own-colours">
+      <label class="color-pick"><input type="color" id="own-accent"><span>Buttons &amp; highlights</span></label>
+      <label class="color-pick"><input type="color" id="own-tint"><span>Background</span></label></div>
+    <p class="hint">Very light or dark colours are adjusted a little so text stays readable.</p>`,
+  background: () => `
+    <div class="uploads">${uploadTile("background", "Background picture", "Up to 8 MB")}</div>
+    ${toggleBox("bg_image.on", "Show my background picture")}
+    ${range("bg_image.dim", 0, 90, "Dim", "%")}${range("bg_image.blur", 0, 24, "Blur", "px")}
+    <h4>Fit</h4>${seg("bg_image.fit", [["cover", "Fill the screen"], ["tile", "Tile"]])}
+    <h4>Behind the page</h4>${seg("motion.ambient", [["grain", "Paper grain"], ["drift", "Drifting colour"], ["petals", "Falling petals"], ["none", "Nothing"]])}`,
+  text: () => `
+    <div class="grid2">${fontSelect("font.heading", "Headings")}${fontSelect("font.body", "Text")}</div>
+    ${range("font.size", 90, 125, "Text size", "%")}
+    <h4>Show titles in</h4>
+    <div class="segmented" role="group" aria-label="Title language">
+      <button type="button" data-setlang="en" class="${titleLang() === "en" ? "on" : ""}">English</button>
+      <button type="button" data-setlang="ja" class="${titleLang() === "ja" ? "on" : ""}">Japanese (romaji)</button></div>
+    <p class="hint">Search finds shows by either name, whichever you pick.</p>`,
+  posters: () => `
+    <h4>Size</h4>${seg("posters", [["s", "Small"], ["m", "Medium"], ["l", "Large"]])}
+    <h4>When you point at one</h4>${seg("motion.hover", [["lift", "Lift"], ["tilt", "Tilt"], ["glow", "Glow"], ["none", "Nothing"]])}`,
+  cards: () => `
+    <h4>Corners</h4>${seg("corners", [["sharp", "Sharp"], ["soft", "Soft"], ["round", "Round"]])}
+    <h4>Spacing</h4>${seg("density", [["comfortable", "Comfortable"], ["compact", "Compact"]])}
+    <h4>Glass</h4>${toggleBox("glass", "Frosted glass on bars and windows")}
+    <h4>When a download finishes</h4>${toggleBox("motion.celebrate", "A burst of petals")}`,
+  logo: () => `
+    <div class="uploads">${uploadTile("logo", "Logo", "Top left and browser tab · up to 1 MB")}${uploadTile("avatar", "Avatar", "Top right · up to 1 MB")}</div>
+    <p class="hint">PNG, JPEG, WebP or GIF. Only you see them (unless an admin makes their look the default).</p>`,
+  mode: () => `
+    ${seg("mode", [["system", "Match device"], ["light", "Light"], ["dark", "Dark"]])}
+    <h4>When you switch</h4>${seg("motion.toggle", [["fade", "Fade"], ["instant", "Instant"]])}
+    <p class="hint">How the page changes when you press ${icon("moon")} at the top.</p>`,
+  motion: () => `
+    <h4>Changing pages</h4>${seg("motion.page", [["slide", "Slide up"], ["fade", "Fade"], ["zoom", "Zoom"], ["none", "None"]])}
+    <h4>Reduce motion</h4>${seg("motion.reduce", [["system", "Like my device"], ["always", "Always"], ["never", "Never"]])}
+    <p class="hint">Reduced motion turns every animation off, including the ones behind the page.</p>`,
+  share: () => `
+    <div class="pop-actions col"><button type="button" class="small" id="look-export">Copy my look as a code</button>
+      <button type="button" class="small" id="look-import">Paste a look code</button>
+      ${can.admin() ? `<button type="button" class="small" id="look-default">Make my look everyone's default</button>` : ""}
+      <button type="button" class="small ghost" id="look-reset">Go back to the default look</button></div>
+    <p class="hint" id="look-source"></p>`,
+};
+
+const comboButton = (n) => `<button type="button" class="combo" data-combo="${n}" data-tip="${esc(`No. ${n}: ${comboNames(wadaBook, n).join(", ")}`)}">${stripe(wadaBook.combos[n].map((i) => wadaBook.colors[i][1]))}<small>No. ${n}</small></button>`;
+let wadaBook = null;
+
+// An example page of AniStash showing a look. In the studio, press any part of it to change that part
+function studioPage(live) {
+  const hot = (part, tip) => live ? `data-edit="${part}" data-tip="${tip}"` : "";
+  const h = live ? "hot" : "";
+  return `<div class="sandbox studio-page" ${live ? 'id="studio-page"' : 'aria-hidden="true"'}>
+    <div class="sb-bg"></div><div class="sb-ambient" aria-hidden="true"></div>
+    <div class="sb-top">
+      <span class="sb-logo ${h}" ${hot("logo", "Change the logo")}></span><b class="sb-brand">anistash</b>
+      <span class="sb-nav ${h}" ${hot("motion", "How pages change")}><i class="on">Browse</i><i>Discover</i><i>Search</i><i>Downloads</i><i>Settings</i></span>
+      <span class="sb-mode ${h}" ${hot("mode", "Light or dark")}></span>
+      <span class="sb-me ${h}" ${hot("logo", "Change your avatar")}></span>
+    </div>
+    <div class="sb-body ${h}" ${hot("background", "Change the background")}>
+      <div class="sb-main">
+        <div class="sb-text ${h}" ${hot("text", "Change the fonts and text size")}><h3>Best this season</h3>
+          <p class="muted">Twelve new shows started this week. These are the ones fans love most.</p></div>
+        <div class="sb-posters ${h}" ${hot("posters", "Poster size and what they do when you point at them")}>${Array.from({ length: 12 }, (_, i) =>
+          `<span class="sb-poster"><b>${i + 1}</b></span>`).join("")}</div>
+        <div class="sb-actions ${h}" ${hot("colours", "Change the colours")}>
+          <span class="chip on">Fantasy</span><span class="chip">Drama</span><span class="chip">Comedy</span><span class="pill accent">Downloading</span>
+          <span class="btn primary small">${icon("download")}Download</span><span class="btn small">${icon("star")}Follow</span></div>
+        <div class="sb-cards ${h}" ${hot("cards", "Corners, spacing and glass")}>
+          <div class="card sb-card"><b>Frieren · S01</b><div class="muted small">6 of 12 episodes · Sub + Dub</div>
+            <div class="progress live" style="margin-top:.45rem"><i style="width:55%"></i></div></div>
+          <div class="card sb-card"><b>The Apothecary Diaries · S02</b><div class="muted small">Waiting · 3 episodes · Sub</div>
+            <div class="progress" style="margin-top:.45rem"><i style="width:12%"></i></div></div>
+        </div>
+        <p class="muted small sb-foot">Text on your background, and <a>a link</a>.</p>
+      </div>
+    </div>
+  </div>`;
+}
+
+// Shows a look on an example page, in light or dark
+function paintFrame(frame, l, dark) {
+  const still = reduceMotion(l);
+  for (const [k, v] of Object.entries({ ...lookTokens(l, dark), ...lookStyle(l) })) frame.style.setProperty(k, v);
+  frame.style.setProperty("--fs", String(l.font.size / 100));
+  Object.assign(frame.dataset, LOOK_DATA(l), { hover: still ? "none" : l.motion.hover, page: still ? "none" : l.motion.page,
+    glass: l.glass ? "on" : "off" });
+  const bg = frame.querySelector(".sb-bg"), url = l.files?.background;
+  const on = l.bg_image.on && url;
+  bg.style.backgroundImage = on ? `url(${JSON.stringify(url)})` : "";
+  bg.style.filter = on && l.bg_image.blur ? `blur(${l.bg_image.blur}px)` : "";
+  bg.style.backgroundSize = l.bg_image.fit === "tile" ? "260px auto" : "cover";
+  bg.style.backgroundRepeat = l.bg_image.fit === "tile" ? "repeat" : "no-repeat";
+  bg.style.setProperty("--dim", String(l.bg_image.dim / 100));
+  bg.classList.toggle("on", Boolean(on));
+  setAmbient(frame.querySelector(".sb-ambient"), still ? "none" : l.motion.ambient);
+  frame.querySelector(".sb-logo").innerHTML = l.files?.logo
+    ? `<img src="${esc(l.files.logo)}" alt="">` : '<svg aria-hidden="true"><use href="#logo"/></svg>';
+  frame.querySelector(".sb-me").innerHTML = l.files?.avatar
+    ? `<img src="${esc(l.files.avatar)}" alt="">` : esc((status?.user?.username || "?").slice(0, 1).toUpperCase());
+  frame.querySelector(".sb-mode").innerHTML = icon(dark ? "sun" : "moon");
+}
+const fillPosters = (frame) => browseList("/api/browse/trending").then(({ items }) => {
+  frame.querySelectorAll(".sb-poster").forEach((el, i) => { if (items[i]?.cover) el.style.backgroundImage = `url(${JSON.stringify(items[i].cover)})`; });
+}).catch(() => {});
+
+// Settings → Appearance: a window onto your own AniStash. Step inside and it opens up into a whole
+// second AniStash (the studio) where pressing anything changes how it looks
+function appearanceSection() {
+  return `
+  <div class="studio-launch">
+    <button type="button" class="launch-window" id="studio-enter" aria-label="Open the studio">
+      <span class="launch-screen">${studioPage(false)}</span>
+      <span class="launch-cta">${icon("palette")}Step inside</span></button>
+    <div class="launch-text"><h2>Make it yours</h2>
+      <p class="muted">Step into a second AniStash and press anything (the colours, posters, text, background, logo) to
+        change how it looks. Nothing changes out here until you press <b>Use this look</b>.</p></div>
+  </div>`;
+}
+function bindLaunch() {
+  const screen = $(".launch-screen"), frame = $(".studio-page", screen);
+  const fit = () => screen.style.setProperty("--k", String(screen.clientWidth / 1280));
+  new ResizeObserver(fit).observe(screen);
+  fit();
+  paintFrame(frame, look, wantsDark(look));
+  fillPosters(frame);
+  $("#studio-enter").addEventListener("click", () => openStudio(screen));
+}
+
+// The studio covers the whole screen: the example page, full size, and a dock with everything else
+function openStudio(from) {
+  if (document.querySelector(".studio-world")) return;
+  const world = document.createElement("div");
+  world.className = "studio-world";
+  world.id = "appearance";
+  world.setAttribute("role", "dialog");
+  world.setAttribute("aria-modal", "true");
+  world.setAttribute("aria-label", "Appearance studio");
+  world.innerHTML = `
+    <div class="studio-scroll">
+      ${studioPage(true)}
+      <div class="look-pop" id="look-pop" role="dialog" aria-labelledby="look-pop-title" tabindex="-1" hidden>
+        <div class="look-pop-head"><h3 id="look-pop-title"></h3>
+          <button type="button" class="icon-btn ghost small" data-close aria-label="Close">${icon("x")}</button></div>
+        <div class="look-pop-body"></div>
+      </div>
+    </div>
+    <div class="studio-hello">Press anything to change it</div>
+    <div class="studio-dock" role="toolbar" aria-label="Studio">
+      <button type="button" class="dock-btn" id="studio-exit" aria-label="Back to AniStash">${icon("back")}<span>Back</span></button>
+      <div class="segmented" role="group" aria-label="Show the example in">
+        <button type="button" data-sbmode="light" aria-label="Light">${icon("sun")}</button><button type="button" data-sbmode="dark" aria-label="Dark">${icon("moon")}</button></div>
+      <div class="studio-parts" role="group" aria-label="Parts you can change">${LOOK_PARTS.map(([id, name]) =>
+        `<button type="button" class="part-chip" data-open="${id}">${name}</button>`).join("")}</div>
+      <button type="button" class="dock-btn" id="studio-share">${icon("settings")}<span>Share &amp; reset</span></button>
+      <div class="dock-save" id="draft-bar" hidden>
+        <button type="button" class="small ghost" id="look-undo">Undo</button>
+        <button type="button" class="small primary" id="look-use">${icon("check")}Use this look</button></div>
+    </div>`;
+  const veil = document.createElement("div");
+  veil.className = "studio-veil";
+  document.body.append(veil, world);
+  document.documentElement.classList.add("in-studio");
+  history.pushState({ studio: true }, "");  // the browser's Back button leaves the studio
+  const frame = $("#studio-page", world);
+  paintFrame(frame, look, wantsDark(look));
+  fillPosters(frame);
+  applyTips(world);
+  const ready = bindAppearance(world);
+  teleport(world, from, true).then(() => ready).then(() => {
+    world.classList.add("arrived");
+    if (!reduceMotion(look)) {
+      frame.classList.add("reveal");
+      setTimeout(() => frame.classList.remove("reveal"), 1800);
+    }
+  });
+}
+
+// Zooms the studio out of the little window in Settings to fill the screen (or back into it)
+function teleport(world, from, opening) {
+  if (reduceMotion(look) || !from?.isConnected) return Promise.resolve();
+  const r = from.getBoundingClientRect(), k = r.width / innerWidth;
+  const small = { transform: `translate(${r.left}px, ${r.top}px) scale(${k})`,
+    clipPath: `inset(0px 0px ${Math.max(0, innerHeight - r.height / k)}px 0px round ${16 / k}px)` };
+  const big = { transform: "translate(0px, 0px) scale(1)", clipPath: "inset(0px 0px 0px 0px round 0px)" };
+  return world.animate(opening ? [small, big] : [big, small],
+    { duration: opening ? 720 : 520, easing: "cubic-bezier(.7, 0, .16, 1)", fill: "both" }).finished.catch(() => {});
+}
+
+async function leaveStudio() {
+  const world = document.querySelector(".studio-world");
+  if (!world || world.classList.contains("leaving")) return;
+  world.classList.add("leaving");
+  const screen = $(".launch-screen");
+  if (screen) paintFrame($(".studio-page", screen), look, wantsDark(look));  // the window shows the look you have now
+  document.documentElement.classList.remove("in-studio");
+  document.querySelector(".studio-veil")?.classList.add("out");
+  await teleport(world, screen, false);
+  dropStudio();
+}
+function dropStudio() {
+  document.querySelector(".studio-world")?.remove();
+  document.querySelector(".studio-veil")?.remove();
+  document.documentElement.classList.remove("in-studio");
+}
+window.addEventListener("popstate", () => document.querySelector(".studio-world")?.leave?.());
 
 function uploadTile(kind, label, hint) {
   return `<div class="upload" data-upload-tile="${kind}">
@@ -2826,36 +2968,25 @@ function uploadTile(kind, label, hint) {
   </div>`;
 }
 
-async function bindAppearance() {
-  const pane = $("#appearance");
+async function bindAppearance(world) {
+  const pane = world, frame = $("#studio-page", world), pop = $("#look-pop", world), scroller = $(".studio-scroll", world);
   const fresh = await api("/api/account/look");
   let saved = clone(fresh.look);
   let draft = clone(saved);
   const myFiles = { ...fresh.my_files };
   if (!saved.own) draft.files = { ...myFiles, avatar: saved.files.avatar };  // editing makes it your own look
-  const book = await loadWada();
+  const book = wadaBook = await loadWada();
+  let dark = wantsDark(draft);  // which way the example is shown
+  let open = null;  // the part whose settings are showing: { id, anchor, at }
+  let bookSize = "", bookFind = "";
 
   const same = () => {
     const strip = (l) => JSON.stringify({ ...l, files: undefined, own: undefined });
     return strip(draft) === strip(saved);
   };
   function paintSandbox() {
-    for (const frame of $$(".sandbox", pane)) {
-      const dark = frame.dataset.sb === "dark";
-      const tokens = lookTokens(draft, dark);
-      for (const [k, v] of Object.entries({ ...tokens, ...lookStyle(draft) })) frame.style.setProperty(k, v);
-      Object.assign(frame.dataset, LOOK_DATA(draft));
-      const bg = frame.querySelector(".sb-bg"), url = draft.files?.background;
-      const on = draft.bg_image.on && url;
-      bg.style.backgroundImage = on ? `url(${JSON.stringify(url)})` : "";
-      bg.style.filter = on && draft.bg_image.blur ? `blur(${Math.round(draft.bg_image.blur / 2)}px)` : "";
-      bg.style.backgroundSize = draft.bg_image.fit === "tile" ? "120px auto" : "cover";
-      bg.style.backgroundRepeat = draft.bg_image.fit === "tile" ? "repeat" : "no-repeat";
-      bg.style.setProperty("--dim", String(draft.bg_image.dim / 100));
-      bg.classList.toggle("on", Boolean(on));
-      frame.querySelector(".sb-logo").innerHTML = draft.files?.logo
-        ? `<img src="${esc(draft.files.logo)}" alt="">` : '<svg aria-hidden="true"><use href="#logo"/></svg>';
-    }
+    paintFrame(frame, draft, dark);
+    for (const b of $$("[data-sbmode]", pane)) b.classList.toggle("on", (b.dataset.sbmode === "dark") === dark);
   }
   function paintControls() {
     for (const el of $$("[data-set]", pane)) {
@@ -2866,8 +2997,8 @@ async function bindAppearance() {
     }
     for (const el of $$("[data-show]", pane)) el.textContent = getPath(draft, el.dataset.show);
     for (const b of $$("[data-combo]", pane)) b.classList.toggle("on", Number(b.dataset.combo) === draft.palette.combo);
-    const p = draft.palette;
-    $("#roles", pane).innerHTML = p.colors.length ? `
+    const p = draft.palette, roles = $("#roles", pane);
+    if (roles) roles.innerHTML = p.colors.length ? `
       <div class="roles"><span class="muted small">Buttons &amp; highlights</span>${p.colors.map((c, i) =>
         `<button type="button" class="dot ${p.accent === i ? "on" : ""}" style="--sw:${c}" data-role="accent" data-i="${i}" aria-label="Use ${c} for buttons"></button>`).join("")}</div>
       <div class="roles"><span class="muted small">Background</span>
@@ -2875,41 +3006,160 @@ async function bindAppearance() {
         `<button type="button" class="dot ${p.tint === i ? "on" : ""}" style="--sw:${c}" data-role="tint" data-i="${i}" aria-label="Tint the background with ${c}"></button>`).join("")}</div>
       ${p.combo ? `<p class="hint" style="margin-top:.2rem">Combination No. ${p.combo}: ${esc(comboNames(book, p.combo).join(" · "))}</p>` : ""}`
       : `<p class="hint">AniStash's own colours (Wada's Red Orange).</p>`;
-    $("#own-accent", pane).value = p.colors[p.accent] || "#e2401f";
-    $("#own-tint", pane).value = p.tint >= 0 ? p.colors[p.tint] : "#f5f2ec";
-    for (const kind of ["background", "logo", "avatar"]) {
-      const url = draft.files?.[kind];
-      $(`[data-preview="${kind}"]`, pane).innerHTML = url ? `<img src="${esc(url)}" alt="">` : icon(kind === "avatar" ? "user" : "plus");
+    const ownAccent = $("#own-accent", pane), ownTint = $("#own-tint", pane);
+    if (ownAccent) ownAccent.value = p.colors[p.accent] || "#e2401f";
+    if (ownTint) ownTint.value = p.tint >= 0 ? p.colors[p.tint] : "#f5f2ec";
+    for (const el of $$("[data-preview]", pane)) {
+      const kind = el.dataset.preview, url = draft.files?.[kind];
+      el.innerHTML = url ? `<img src="${esc(url)}" alt="">` : icon(kind === "avatar" ? "user" : "plus");
       $(`[data-remove="${kind}"]`, pane).hidden = !myFiles[kind];
     }
     $("#draft-bar", pane).hidden = same();
-    $("#look-source", pane).textContent = saved.own ? "You're using your own look."
+    const source = $("#look-source", pane);
+    if (source) source.textContent = saved.own ? "You're using your own look."
       : "You're using the site's default look. Anything you use here becomes your own.";
   }
-  const refresh = () => { paintSandbox(); paintControls(); };
+  const refresh = () => { paintSandbox(); paintControls(); if (open && !open.at) place(); };
   const change = (fn) => { fn(); refresh(); };
 
-  $("#curated", pane).innerHTML = CURATED.map((n) => {
-    const colors = book.combos[n].map((i) => book.colors[i][1]);
-    return `<button type="button" class="combo" data-combo="${n}" data-tip="${esc(`No. ${n}: ${comboNames(book, n).join(", ")}`)}">${stripe(colors)}<small>No. ${n}</small></button>`;
-  }).join("");
+  // The settings pop out of the part you pressed: just under it, or, for the background, where you pressed
+  function place() {
+    const box = scroller.getBoundingClientRect(), a = open.anchor.getBoundingClientRect();
+    const x = open.at ? open.at.x : a.left + a.width / 2 - box.left;
+    const y = open.at ? open.at.y : a.bottom - box.top + scroller.scrollTop;
+    const w = Math.min(pop.classList.contains("wide") ? 620 : 380, box.width - 24);
+    const left = Math.max(12, Math.min(box.width - w - 12, x - w / 2));
+    Object.assign(pop.style, { width: `${w}px`, left: `${left}px`, top: `${y + 12}px` });
+    pop.style.setProperty("--arrow", `${Math.max(20, Math.min(w - 20, x - left))}px`);
+    // Too low to fit above the dock? Then it grows upwards from the part instead
+    const h = pop.offsetHeight, shift = box.top - scroller.scrollTop;  // content position → screen position
+    const above = (open.at ? open.at.y : a.top - box.top + scroller.scrollTop) - 12 - h;
+    const dock = $(".studio-dock", world).getBoundingClientRect().top;
+    const flip = shift + y + 12 + h > dock - 8 && shift + above > box.top + 70;
+    pop.classList.toggle("above", flip);
+    if (flip) pop.style.top = `${above}px`;
+  }
+  function openPart(id, anchor, e) {
+    if (open?.anchor === anchor && open.id === id) return closePart();
+    for (const el of $$(".editing", pane)) el.classList.remove("editing");
+    anchor.classList.add("editing");
+    const box = scroller.getBoundingClientRect(), wide = anchor.classList.contains("sb-body");  // the background is the whole page
+    open = { id, anchor, at: wide && e?.clientX ? { x: e.clientX - box.left, y: e.clientY - box.top + scroller.scrollTop } : null };
+    for (const chip of $$("[data-open]", pane)) chip.classList.toggle("on", chip.dataset.open === id);
+    $("#look-pop-title", pane).textContent = LOOK_PARTS.find(([k]) => k === id)?.[1] || "Share & reset";
+    $(".look-pop-body", pop).innerHTML = PART_SETTINGS[id]();
+    pop.classList.remove("wide", "in");
+    pop.hidden = false;
+    applyTips(pop);
+    paintControls();
+    place();
+    void pop.offsetWidth;  // start the pop-out again
+    pop.classList.add("in");
+    pop.focus({ preventScroll: true });
+    const r = pop.getBoundingClientRect(), dock = $(".studio-dock", world).getBoundingClientRect().top;
+    if (r.bottom > dock - 12) scroller.scrollBy({ top: Math.min(r.bottom - dock + 24, r.top - 80), behavior: "smooth" });
+  }
+  function closePart() {
+    if (!open) return;
+    open.anchor.classList.remove("editing");
+    for (const chip of $$("[data-open]", pane)) chip.classList.remove("on");
+    open = null;
+    pop.hidden = true;
+    pop.classList.remove("wide");
+  }
+  // Pressing outside the settings (and not on another part) puts them away
+  const outside = (e) => {
+    if (!pane.isConnected) return document.removeEventListener("pointerdown", outside, true);
+    if (open && !pop.contains(e.target) && !e.target.closest("[data-edit], .studio-dock")) closePart();
+  };
+  document.addEventListener("pointerdown", outside, true);
+  // Esc puts the settings away, or (with none open) leaves the studio
+  const keys = (e) => {
+    if (!world.isConnected) return document.removeEventListener("keydown", keys);
+    if (e.key !== "Escape" || tour) return;
+    if (open) closePart(); else history.back();
+  };
+  document.addEventListener("keydown", keys);
+  // Leaving (Back, Esc or the browser's Back button) checks for changes you haven't used
+  world.leave = () => {
+    if (!same() && !confirm("Leave the studio without using your changes?")) return history.pushState({ studio: true }, "");
+    closePart();
+    document.removeEventListener("pointerdown", outside, true);
+    document.removeEventListener("keydown", keys);
+    leaveStudio();
+  };
+
+  // Show what a motion setting does, right away
+  function demo(path) {
+    if (path === "motion.page" || path === "motion.reduce") {
+      const nav = [...frame.querySelectorAll(".sb-nav i")], at = nav.findIndex((i) => i.classList.contains("on"));
+      nav.forEach((i, n) => i.classList.toggle("on", n === (at + 1) % nav.length));
+      const main = frame.querySelector(".sb-main");
+      main.classList.remove("enter");
+      void main.offsetWidth;
+      main.classList.add("enter");
+    }
+    if (path === "motion.hover") {
+      const poster = frame.querySelectorAll(".sb-poster")[1];
+      poster.classList.add("demo");
+      setTimeout(() => poster.classList.remove("demo"), 900);
+    }
+    if (path === "motion.celebrate" && draft.motion.celebrate && !reduceMotion(draft)) burst(frame.querySelector(".sb-card").getBoundingClientRect());
+  }
+
+  function drawBook() {
+    $("#book-grid", pop).innerHTML = Object.keys(book.combos).filter((n) => {
+      const names = comboNames(book, n).join(" ").toLowerCase();
+      return (!bookSize || book.combos[n].length === Number(bookSize)) && (!bookFind || names.includes(bookFind));
+    }).map((n) => comboButton(n)).join("") || `<p class="muted">No combination has that colour.</p>`;
+    applyTips(pop);
+    paintControls();
+  }
+  function toggleBook() {
+    const panel = $("#book", pop);
+    panel.hidden = !panel.hidden;
+    pop.classList.toggle("wide", !panel.hidden);
+    $("#book-open", pop).classList.toggle("on", !panel.hidden);
+    if (!panel.hidden) drawBook();
+    place();
+  }
 
   pane.addEventListener("click", (e) => {
-    const t = e.target.closest("button, [data-combo]");
+    const part = e.target.closest("[data-edit]");
+    if (part && !pop.contains(part)) return openPart(part.dataset.edit, part, e);
+    const t = e.target.closest("button");
     if (!t || !pane.contains(t)) return;
-    if (t.dataset.set && t.dataset.value !== undefined) return change(() => setPath(draft, t.dataset.set, t.dataset.value));
+    if (t.dataset.open) return openPart(t.dataset.open, $(`[data-edit="${t.dataset.open}"]`, frame));
+    if (t.dataset.sbmode) return change(() => { dark = t.dataset.sbmode === "dark"; });
+    if (t.dataset.close !== undefined) return closePart();
+    if (t.dataset.set && t.dataset.value !== undefined) {
+      change(() => setPath(draft, t.dataset.set, t.dataset.value));
+      if (t.dataset.set === "mode") change(() => { dark = wantsDark(draft); });
+      return demo(t.dataset.set);
+    }
     if (t.dataset.combo) return change(() => { draft.palette = paletteFromCombo(book, t.dataset.combo); });
+    if (t.dataset.size !== undefined) {
+      bookSize = t.dataset.size;
+      for (const x of $$("[data-size]", pop)) x.classList.toggle("on", x === t);
+      return drawBook();
+    }
     if (t.dataset.role) return change(() => { draft.palette[t.dataset.role] = Number(t.dataset.i); });
-    if (t.dataset.setlang) return setTitleLang(t.dataset.setlang);
+    if (t.dataset.setlang) {
+      setTitleLang(t.dataset.setlang);
+      for (const b of $$("[data-setlang]", pop)) b.classList.toggle("on", b === t);
+      return;
+    }
     if (t.dataset.remove) return removeUpload(t.dataset.remove);
     switch (t.id) {
+      case "studio-exit": return history.back();
+      case "studio-share": return openPart("share", t);
       case "shuffle": return change(() => {
         const keys = Object.keys(book.combos);
         draft.palette = paletteFromCombo(book, keys[Math.floor(Math.random() * keys.length)]);
       });
       case "brand-colours": return change(() => { draft.palette = clone(DEFAULT_LOOK.palette); });
-      case "book-open": return openBook();
-      case "look-undo": return change(() => { draft = { ...clone(saved), files: draft.files }; });
+      case "book-open": return toggleBook();
+      case "look-undo": return change(() => { draft = { ...clone(saved), files: draft.files }; dark = wantsDark(draft); });
       case "look-use": return useDraft(t);
       case "look-export": return exportLook();
       case "look-import": return importLook();
@@ -2919,6 +3169,7 @@ async function bindAppearance() {
   });
   pane.addEventListener("input", (e) => {
     const el = e.target;
+    if (el.id === "book-find") { bookFind = el.value.trim().toLowerCase(); return drawBook(); }
     if (el.id === "own-accent" || el.id === "own-tint") {
       return change(() => {
         const accent = $("#own-accent", pane).value, tint = $("#own-tint", pane).value;
@@ -2928,6 +3179,7 @@ async function bindAppearance() {
     if (!el.dataset.set || el.matches("button")) return;
     change(() => setPath(draft, el.dataset.set, el.dataset.num !== undefined ? Number(el.value)
       : el.dataset.bool !== undefined ? el.checked : el.value));
+    demo(el.dataset.set);
   });
   pane.addEventListener("change", async (e) => {
     const input = e.target.closest("[data-upload]");
@@ -2947,16 +3199,18 @@ async function bindAppearance() {
     } catch (err) { toast(err.message, true); }
     input.value = "";
   });
-  for (const area of $$("[data-upload-tile]", pane)) {
-    area.addEventListener("dragover", (e) => { e.preventDefault(); area.classList.add("over"); });
-    area.addEventListener("dragleave", () => area.classList.remove("over"));
-    area.addEventListener("drop", (e) => {
-      e.preventDefault();
-      area.classList.remove("over");
-      const input = area.querySelector("[data-upload]");
-      if (e.dataTransfer.files.length) { input.files = e.dataTransfer.files; input.dispatchEvent(new Event("change", { bubbles: true })); }
-    });
-  }
+  // Pictures can be dropped on their tile too
+  const tileFor = (e) => e.target.closest?.("[data-upload-tile]");
+  pane.addEventListener("dragover", (e) => { const area = tileFor(e); if (area) { e.preventDefault(); area.classList.add("over"); } });
+  pane.addEventListener("dragleave", (e) => tileFor(e)?.classList.remove("over"));
+  pane.addEventListener("drop", (e) => {
+    const area = tileFor(e);
+    if (!area) return;
+    e.preventDefault();
+    area.classList.remove("over");
+    const input = area.querySelector("[data-upload]");
+    if (e.dataTransfer.files.length) { input.files = e.dataTransfer.files; input.dispatchEvent(new Event("change", { bubbles: true })); }
+  });
 
   async function removeUpload(kind) {
     try {
@@ -2985,6 +3239,7 @@ async function bindAppearance() {
     status.look = result;
     saved = clone(result);
     draft = { ...clone(result), files: { ...myFiles, avatar: result.files.avatar } };
+    dark = wantsDark(draft);
     applyLook(result, { fade: true });
     refresh();
   }
@@ -3007,39 +3262,11 @@ async function bindAppearance() {
     if (!code) return;
     try {
       const parsed = JSON.parse(decodeURIComponent(escape(atob(code.trim()))));
-      change(() => { draft = { ...clone(DEFAULT_LOOK), ...parsed, files: draft.files }; });
-      toast("Look loaded into the sandbox. Press Use this look to keep it");
+      change(() => { draft = { ...clone(DEFAULT_LOOK), ...parsed, files: draft.files }; dark = wantsDark(draft); });
+      toast("Look loaded into the example. Press Use this look to keep it");
     } catch { toast("That code doesn't look right.", true); }
   }
-  async function openBook() {
-    const backdrop = sheet(`<h2>A Dictionary of Color Combinations</h2>
-      <p class="muted small">All 348 of Sanzo Wada's combinations. Pick one to try it in the sandbox.</p>
-      <div class="row" style="margin-bottom:.6rem">${`<div class="segmented" role="group" id="book-size">${[["", "All"], ["2", "2 colours"], ["3", "3"], ["4", "4"]]
-        .map(([v, l]) => `<button type="button" data-size="${v}" class="${v ? "" : "on"}">${l}</button>`).join("")}</div>`}
-        <input type="search" id="book-find" placeholder="Find a colour, e.g. Cossack Green" style="flex:1;min-width:180px"></div>
-      <div class="combos book" id="book-grid"></div>`);
-    const grid = backdrop.querySelector("#book-grid");
-    let size = "", find = "";
-    const draw = () => {
-      grid.innerHTML = Object.keys(book.combos).filter((n) => {
-        const names = comboNames(book, n).join(" ").toLowerCase();
-        return (!size || book.combos[n].length === Number(size)) && (!find || names.includes(find));
-      }).map((n) => `<button type="button" class="combo" data-pick="${n}" title="${esc(comboNames(book, n).join(", "))}">${stripe(book.combos[n].map((i) => book.colors[i][1]))}<small>No. ${n}</small></button>`).join("")
-        || `<p class="muted">No combination has that colour.</p>`;
-    };
-    draw();
-    backdrop.addEventListener("click", (e) => {
-      const b = e.target.closest("[data-size]"), pick = e.target.closest("[data-pick]");
-      if (b) { size = b.dataset.size; for (const x of backdrop.querySelectorAll("[data-size]")) x.classList.toggle("on", x === b); draw(); }
-      if (pick) { change(() => { draft.palette = paletteFromCombo(book, pick.dataset.pick); }); backdrop.remove(); }
-    });
-    backdrop.querySelector("#book-find").addEventListener("input", (e) => { find = e.target.value.trim().toLowerCase(); draw(); });
-  }
 
-  // Real posters in the sandbox when Browse has loaded them
-  browseList("/api/browse/trending").then(({ items }) => {
-    $$(".sb-poster", pane).forEach((el, i) => { if (items[i]?.cover) el.style.backgroundImage = `url(${JSON.stringify(items[i].cover)})`; });
-  }).catch(() => {});
   refresh();
 }
 
@@ -3408,7 +3635,7 @@ const SETTINGS_RENDER = {
 
   appearance(el) {
     el.innerHTML = appearanceSection();
-    return bindAppearance();
+    bindLaunch();
   },
 
   async downloads(el) {

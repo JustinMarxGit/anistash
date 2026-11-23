@@ -5,6 +5,18 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "1.5.0",
+        "title": "The studio",
+        "items": [
+            "Settings → Appearance is no longer a long scroll of cards. It's a window onto your own AniStash: step inside "
+            "and it opens up into a second, full-size AniStash over the whole screen.",
+            "Press any part of it (the colours, background, text, posters, cards, logo, the light/dark button or the "
+            "navigation) and the settings for just that part pop out beside it. A dock at the bottom has everything else.",
+            "It shows motion as you pick it: pages change, posters lift or tilt, petals fall and downloads burst.",
+            "Back, Esc or your browser's back button takes you out again, and asks first if you have changes you haven't used.",
+        ],
+    },
+    {
         "version": "1.4.4",
         "title": "A quieter switch",
         "items": [
