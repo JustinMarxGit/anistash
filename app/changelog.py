@@ -5,6 +5,18 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "1.2.0",
+        "title": "Colours from Sanzo Wada",
+        "items": [
+            "The colour presets under Settings → Appearance now come from Sanzo Wada's A Dictionary of Color "
+            "Combinations (1933): Eosine Pink, Old Rose, Carmine, Yellow Orange, Cossack Green, Sea Green, "
+            "Cerulian Blue, Olympic Blue, Deep Lyons Blue, Aconite Violet and Slate Color.",
+            "Each swatch shows the two colours Wada paired it with; hover over it for the combination number.",
+            "AniStash's own colour is his Red Orange. If you'd picked one of the old presets, your colour is kept "
+            "(under Your own).",
+        ],
+    },
+    {
         "version": "1.1.1",
         "title": "The logo wears your colour",
         "items": ["The AniStash logo at the top, on the login screen and in your browser tab now takes on the colour "

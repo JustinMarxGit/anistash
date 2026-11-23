@@ -721,17 +721,21 @@ select.small { min-height: 36px; padding: 0 .55rem; font-size: .88rem; }
 }
 
 /* Appearance: colour swatches and a live preview */
-.swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: .55rem; }
+.swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: .55rem; }
 .swatch { position: relative; display: flex; flex-direction: column; align-items: center; gap: .4rem; padding: .7rem .4rem .55rem;
   min-height: 0; border-radius: 14px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
   font-size: .8rem; cursor: pointer; transition: border-color .2s, transform .25s var(--spring); }
 .swatch:hover { border-color: var(--border-strong); }
 .swatch:active { transform: scale(.95); }
-.swatch span { width: 34px; height: 34px; border-radius: 50%; background: var(--sw); display: grid; place-items: center;
+.swatch span { position: relative; width: 34px; height: 34px; border-radius: 50%; background: var(--sw); display: grid; place-items: center;
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 12%); color: #fff; }
-.swatch b { font-weight: 600; }
+/* the two colours Wada paired it with */
+.swatch span i { position: absolute; width: 13px; height: 13px; border-radius: 50%; box-shadow: 0 0 0 2px var(--surface-2); }
+.swatch span i:nth-child(1) { right: -7px; bottom: 7px; }
+.swatch span i:nth-child(2) { right: -3px; bottom: -4px; }
+.swatch b { font-weight: 600; text-align: center; line-height: 1.2; }
 .swatch.on { border-color: var(--sw); box-shadow: 0 0 0 2px var(--sw); }
-.swatch.custom span { background: conic-gradient(#e2401f, #d99a00, #3f9b5a, #13a3a3, #2f7fd8, #7c5cff, #e05a8a, #e2401f); }
+.swatch.custom span { background: conic-gradient(#dd4027, #f99d1b, #437742, #00b49b, #0093a5, #1c4286, #a36aa5, #f37f94, #dd4027); }
 .swatch.custom.on span { background: var(--sw); }
 .swatch.custom span .i { width: 16px; height: 16px; filter: drop-shadow(0 1px 1px rgb(0 0 0 / 40%)); }
 .swatch input[type=color] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0; padding: 0; }

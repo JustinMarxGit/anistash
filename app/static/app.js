@@ -116,9 +116,22 @@ const icon = (name, cls = "") => `<svg class="i ${cls}" aria-hidden="true"><use 
 // Each person's own: saved with their account (so it follows them to other devices) and in this
 // browser too, so the page doesn't flash the wrong colours while it loads.
 
+// The presets come from Sanzo Wada's "A Dictionary of Color Combinations" (Haishoku Sōkan, 1933):
+// each is one of his colours, shown with the two it's paired with in one of his numbered combinations.
+// [hex ('' = AniStash's own vermilion, Wada's Red Orange), name, combination No., [partner colours]]
 const ACCENTS = [
-  ["", "Vermilion"], ["#e05a8a", "Sakura"], ["#3f9b5a", "Matcha"], ["#2f7fd8", "Ocean"],
-  ["#7c5cff", "Violet"], ["#d99a00", "Amber"], ["#13a3a3", "Teal"], ["#6b7280", "Ink"],
+  ["", "Red Orange", 164, [["#fcb315", "Orange Yellow"], ["#4f4086", "Violet"]]],
+  ["#f37f94", "Eosine Pink", 134, [["#9a72aa", "Light Mauve"], ["#59256a", "Red Violet"]]],
+  ["#d46d7a", "Old Rose", 162, [["#8fa071", "Rainette Green"], ["#b984af", "Lilac"]]],
+  ["#cc1236", "Carmine", 122, [["#fdbf68", "Cream Yellow"], ["#00978d", "Benzol Green"]]],
+  ["#f99d1b", "Yellow Orange", 151, [["#f5ecc2", "Sulpher Yellow"], ["#064f6e", "Vandar Poel's Blue"]]],
+  ["#437742", "Cossack Green", 135, [["#f5ecc2", "Sulpher Yellow"], ["#97acc8", "Salvia Blue"]]],
+  ["#00b49b", "Sea Green", 133, [["#82241f", "Vandyke Red"], ["#b09f36", "Citrine"]]],
+  ["#0093a5", "Cerulian Blue", 125, [["#d1b0a7", "Fawn"], ["#40456a", "Violet Blue"]]],
+  ["#5a82b3", "Olympic Blue", 157, [["#7d133a", "Pansy Purple"], ["#d6b43e", "Olive Ocher"]]],
+  ["#1c4286", "Deep Lyons Blue", 126, [["#ebd3a2", "Ivory Buff"], ["#e2b540", "Yellow Ocher"]]],
+  ["#a36aa5", "Aconite Violet", 187, [["#005b8d", "Helvetia Blue"], ["#c0a9b3", "Grayish Lavender"]]],
+  ["#34454c", "Slate Color", 140, [["#f3a257", "Golden Yellow"], ["#007190", "Antwarp Blue"]]],
 ];
 const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
 let theme = { mode: "system", accent: "" };
@@ -2509,13 +2522,16 @@ function appearanceSection() {
       <p class="hint">The ${icon("moon")} button at the top switches too.</p>
       <h3>Colour</h3>
       <div class="swatches" role="group" aria-label="Accent colour">
-        ${ACCENTS.map(([hex, name]) => `<button type="button" class="swatch ${theme.accent === hex ? "on" : ""}" data-accent="${hex}"
-            style="--sw:${hex || "#e2401f"}" aria-pressed="${theme.accent === hex}"><span></span><b>${name}</b></button>`).join("")}
+        ${ACCENTS.map(([hex, name, combo, partners]) => `<button type="button" class="swatch ${theme.accent === hex ? "on" : ""}" data-accent="${hex}"
+            style="--sw:${hex || "#dd4027"}" aria-pressed="${theme.accent === hex}"
+            data-tip="${esc(`${name}${hex ? "" : " (AniStash's own colour)"}. In combination No. ${combo} it's paired with ${partners.map((x) => x[1]).join(" and ")}`)}">
+            <span>${partners.map(([c]) => `<i style="background:${c}"></i>`).join("")}</span><b>${name}</b></button>`).join("")}
         <label class="swatch custom ${custom ? "on" : ""}" style="--sw:${custom ? theme.accent : "#888"}">
           <span>${icon("plus")}</span><b>Your own</b>
           <input type="color" id="accent-picker" value="${custom ? theme.accent : "#e2401f"}" aria-label="Pick any colour"></label>
       </div>
-      <p class="hint">Very light or very dark colours are adjusted a little so text stays readable.</p>
+      <p class="hint">The colours come from Sanzo Wada's <i>A Dictionary of Color Combinations</i> (1933); the small dots show what he paired each
+        one with. Very light or very dark colours are adjusted a little so text stays readable.</p>
       <div class="theme-preview" aria-hidden="true">
         <span class="btn primary small">${icon("download")}Download</span>
         <span class="chip on">Fantasy</span><span class="chip">Drama</span>

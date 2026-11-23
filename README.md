@@ -58,8 +58,9 @@ It runs in its own Proxmox LXC, created with one command, and works on phones as
 - **Download locations:** SMB or NFS shares, or local folders, added and tested from the web UI.
 - **Multi-user:** admin, member and viewer roles, with careful security (see below).
 - **Updates from the web page:** one click (or automatically), with live progress and automatic rollback.
-- **Your look:** a light/dark switch at the top, and under Settings → Appearance a choice of colour schemes or any
-  colour you like. Each person's choice is their own and follows them to every device.
+- **Your look:** a light/dark switch at the top, and under Settings → Appearance colour schemes drawn from Sanzo
+  Wada's *A Dictionary of Color Combinations* (1933), or any colour you like. Each person's choice is their own and
+  follows them to every device; the logo takes on the colour too.
 - **Settings that are easy to find:** grouped into sections (Updates, Appearance, Downloads, Storage, Media server,
   Users…), a sidebar on desktop and a simple list on phones.
 - **Explains itself:** every button has a plain-language tooltip, and new users get a short guided tour.
@@ -322,4 +323,6 @@ possible, support the creators by watching anime through official, licensed serv
 
 AniStash is free and open source software under the **[GNU General Public License v3.0](LICENSE)**. You may use,
 study, share and change it, for free; versions you share must stay under the same license. The bundled fonts
-(Bricolage Grotesque, Onest) are under the SIL Open Font License (see `app/static/fonts/`).
+(Bricolage Grotesque, Onest) are under the SIL Open Font License (see `app/static/fonts/`). The colour presets are
+taken from Sanzo Wada's *A Dictionary of Color Combinations* (Haishoku Sōkan), using the colour values digitised by
+[mattdesl/dictionary-of-colour-combinations](https://github.com/mattdesl/dictionary-of-colour-combinations).
