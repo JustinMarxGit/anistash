@@ -785,12 +785,20 @@ select.small { min-height: 36px; padding: 0 .55rem; font-size: .88rem; }
 /* Switching light/dark: the circle that grows from the button */
 ::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
 .theme-wipe { position: fixed; inset: 0; z-index: 9999; pointer-events: none; }
-/* "Drop into water": the falling drop, and rings spreading over the page */
-.water-drop { position: fixed; z-index: 10001; width: 18px; height: 18px; pointer-events: none;
-  border-radius: 50% 50% 50% 50% / 58% 58% 42% 42%; background: var(--c); box-shadow: 0 0 0 1.5px var(--edge), 0 4px 10px rgb(0 0 0 / 35%); }
+/* "Drop into water": a clear bead of water in black and white, its shadow, and the splash */
+.water-drop, .drop-shade, .ripples .spray, .ripples .glint { position: fixed; width: 16px; height: 16px; margin: -8px 0 0 -8px;
+  border-radius: 50%; pointer-events: none; }
+.water-drop, .ripples .spray {
+  background: radial-gradient(circle at 34% 30%, rgb(255 255 255 / 95%) 0 9%, rgb(255 255 255 / 0) 24%),
+    radial-gradient(circle at 62% 74%, rgb(255 255 255 / 45%) 0 12%, rgb(255 255 255 / 0) 34%),
+    radial-gradient(circle, rgb(0 0 0 / 4%) 40%, rgb(0 0 0 / 55%) 100%);
+  box-shadow: inset 0 0 0 .5px rgb(0 0 0 / 35%), 0 0 0 .5px rgb(255 255 255 / 40%); }
+.water-drop { z-index: 10001; }
+.drop-shade { z-index: 10000; background: radial-gradient(circle, rgb(0 0 0 / 45%), rgb(0 0 0 / 0) 70%); }
 .ripples { position: fixed; inset: 0; z-index: 10000; pointer-events: none; overflow: hidden; view-transition-name: ripples; }
-.ripples i { position: absolute; width: 0; height: 0; border-radius: 50%; transform: translate(-50%, -50%);
-  border: var(--w, 2px) solid var(--c); box-shadow: 0 0 14px -2px var(--c); }
+.ripples .spray, .ripples .glint { position: absolute; }
+.ripples .glint { background: radial-gradient(circle, rgb(255 255 255 / 80%), rgb(255 255 255 / 0) 65%); }
+.ripples .ring { position: absolute; width: 0; height: 0; border-radius: 50%; transform: translate(-50%, -50%); }
 ::view-transition-group(ripples), ::view-transition-old(ripples), ::view-transition-new(ripples) { animation: none; }
 
 /* Celebrating a finished download: petals burst from the Downloads tab */

@@ -324,75 +324,105 @@ function toggleMode(button) {
   dropIntoWater(button, next).finally(() => { toggleMode.busy = false; });
 }
 
-// "Drop into water": a drop of the new colour falls onto the button; where it lands the new
-// colours spread out like water, fast and then slowing, while rings of black and white ripple
-// across the page and fade, like a stone's rings on a still pond.
+// "Drop into water", filmed in slow motion: a clear drop falls onto the button, its shadow
+// gathering beneath it, and splashes. The new colours spread out from there like water, quick
+// off the mark and then slowing to a long, gentle tail, while rings of light and shadow travel
+// across the page and lose their strength as they go: wider, softer and fainter.
+const settle = (t, k) => (1 - Math.exp(-k * t)) / (1 - Math.exp(-k));
+const frames = (f, n = 24) => Array.from({ length: n + 1 }, (_, i) => ({ ...f(i / n), offset: i / n }));
+
+// One ring: a white crest with a dark trough outside it
+function ringFrames(reach, strength, k) {
+  return frames((t) => {
+    const d = 2 * reach * settle(t, k), w = 1 + 4 * t, blur = 1.5 + 20 * t;
+    return { width: `${d}px`, height: `${d}px`, opacity: strength * Math.min(1, t * 20) * (1 - t) ** 1.4,
+      boxShadow: `inset 0 0 ${blur}px ${w}px rgb(255 255 255 / 70%), 0 0 ${blur}px ${w}px rgb(0 0 0 / 45%)` };
+  });
+}
+
 async function dropIntoWater(button, next) {
   const r = button.getBoundingClientRect();
   const x = r.left + r.width / 2, y = r.top + r.height / 2;
   const radius = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
-  const toDark = wantsDark(next);
-  const now = lookTokens(look, !toDark), then = lookTokens(next, toDark);
-  const ink = { dark: toDark ? then["--bg"] : now["--bg"], light: toDark ? now["--bg"] : then["--bg"] };
 
-  // 1. The drop falls
-  const drop = document.createElement("div");
+  // 1. The drop falls towards the page, its shadow sharpening and closing in beneath it
+  const drop = document.createElement("div"), shade = document.createElement("div");
   drop.className = "water-drop";
-  drop.style.cssText = `left:${x}px;top:${y}px;--c:${then["--bg"]};--edge:${then["--text"]}`;
-  document.body.append(drop);
+  shade.className = "drop-shade";
+  drop.style.cssText = shade.style.cssText = `left:${x}px;top:${y}px`;
+  document.body.append(shade, drop);
+  const fall = { duration: 650, easing: "cubic-bezier(.45, 0, .85, .4)", fill: "forwards" };
+  shade.animate([{ transform: "translate(18px, 26px) scale(1.8)", opacity: 0, filter: "blur(5px)" },
+    { transform: "translate(0, 0) scale(.9)", opacity: 1, filter: "blur(1px)" }], fall);
   await drop.animate([
-    { transform: "translate(-50%, -260%) scale(.55, 1.35)", opacity: 0 },
-    { transform: "translate(-50%, -120%) scale(.75, 1.2)", opacity: 1, offset: 0.55 },
-    { transform: "translate(-50%, -50%) scale(1, 1)", offset: 0.85 },
-    { transform: "translate(-50%, -50%) scale(1.7, .45)", opacity: 0.9 },
-  ], { duration: 280, easing: "cubic-bezier(.55, 0, .9, .55)", fill: "forwards" }).finished;
+    { transform: "translateY(-34px) scale(2.4)", opacity: 0, filter: "blur(2px)" },
+    { opacity: 1, offset: 0.3 },
+    { transform: "translateY(0) scale(1)", opacity: 1, filter: "blur(0)" },
+  ], fall).finished;
 
-  // 2. Rings spread across the surface, alternating dark and light
-  const rings = document.createElement("div");
-  rings.className = "ripples";
-  rings.innerHTML = [0, 1, 2, 3, 4].map((i) => `<i style="left:${x}px;top:${y}px;--c:${i % 2 ? ink.light : ink.dark};
-    --w:${3 - i * 0.4}px"></i>`).join("");
-  // The new colours spread like water: quick at first, then slowly settling
-  const spread = { duration: 1500, easing: "cubic-bezier(.22, .62, .3, 1)" };
-  const clip = [`circle(0px at ${x}px ${y}px)`, `circle(${radius}px at ${x}px ${y}px)`];
-  const ripple = () => [...rings.children].map((ring, i) => {
-    if (i === 0) {  // the first ring is the wet edge of the spreading colour
-      return ring.animate([{ width: "0px", height: "0px", opacity: 1 }, { opacity: 0.85, offset: 0.7 },
-        { width: `${radius * 2}px`, height: `${radius * 2}px`, opacity: 0 }], { ...spread, fill: "both" }).finished;
+  // 2. The splash, and the ripples it sends across the surface
+  const water = document.createElement("div");
+  water.className = "ripples";
+  const spot = (left, top, cls) => {
+    const el = document.createElement("span");
+    el.className = cls;
+    el.style.cssText = `left:${left}px;top:${top}px`;
+    water.append(el);
+    return el;
+  };
+  const spread = { duration: 2600, easing: "linear" };
+  const clip = frames((t) => ({ clipPath: `circle(${radius * settle(t, 4.2)}px at ${x}px ${y}px)` }));
+  const splash = () => {
+    const done = [];
+    const run = (el, keyframes, opts) => done.push(el.animate(keyframes, { fill: "both", ...opts }).finished);
+    // The wet edge of the new colours, then a train of smaller, weaker rings behind it
+    run(spot(x, y, "ring"), ringFrames(radius, 1, 4.2), spread);
+    [0.62, 0.44, 0.3, 0.18].forEach((reach, i) => run(spot(x, y, "ring"), ringFrames(radius * reach, 0.8 * 0.72 ** i, 3.4),
+      { duration: 2400 + i * 250, delay: 180 + i * 230, easing: "linear" }));
+    // The glint where it lands
+    run(spot(x, y, "glint"), [{ transform: "scale(.2)", opacity: 0.9 }, { transform: "scale(3)", opacity: 0 }],
+      { duration: 520, easing: "cubic-bezier(.2, .7, .3, 1)" });
+    // The crown: droplets thrown up and out, each landing with a little ripple of its own
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * 2 * Math.PI + Math.random() * 0.5, dist = 26 + Math.random() * 46;
+      const dx = Math.cos(a) * dist, dy = Math.sin(a) * dist, s = 0.35 + Math.random() * 0.4, t = 650 + Math.random() * 350;
+      run(spot(x, y, "spray"), [
+        { transform: `translate(0, 0) scale(${s * 0.4})`, opacity: 0 },
+        { transform: `translate(${dx * 0.55}px, ${dy * 0.55}px) scale(${s * 1.5})`, opacity: 1, offset: 0.45 },
+        { transform: `translate(${dx}px, ${dy}px) scale(${s * 0.7})`, opacity: 0.9, offset: 0.97 },
+        { transform: `translate(${dx}px, ${dy}px) scale(${s * 0.7})`, opacity: 0 },
+      ], { duration: t, delay: 40, easing: "cubic-bezier(.25, .6, .4, 1)" });
+      run(spot(x + dx, y + dy, "ring"), ringFrames(10 + dist * 0.25, 0.7, 3), { duration: 900, delay: 40 + t * 0.95, easing: "linear" });
     }
-    const size = radius * (0.5 + i * 0.3) * 2;
-    return ring.animate([
-      { width: "0px", height: "0px", opacity: 0.9 },
-      { opacity: 0.6, offset: 0.4 },
-      { width: `${size}px`, height: `${size}px`, opacity: 0 },
-    ], { duration: 1500 + i * 180, delay: 120 + i * 190, easing: "cubic-bezier(.15, .6, .3, 1)", fill: "both" }).finished;
-  });
+    return Promise.all(done).catch(() => {});
+  };
 
   if (document.startViewTransition) {
-    // The rings get their own layer in the transition, so they ripple on top of both pages
-    const transition = document.startViewTransition(() => { drop.remove(); applyLook(next); document.body.append(rings); });
+    // The ripples get their own layer in the transition, so they travel on top of both pages
+    const transition = document.startViewTransition(() => { drop.remove(); shade.remove(); applyLook(next); document.body.append(water); });
     await transition.ready.catch(() => {});
-    document.documentElement.animate({ clipPath: clip }, { ...spread, pseudoElement: "::view-transition-new(root)" });
-    const done = ripple();
+    document.documentElement.animate(clip, { ...spread, pseudoElement: "::view-transition-new(root)" });
+    const done = splash();
     await transition.finished.catch(() => {});
     saveLook(next);
-    await Promise.all(done).catch(() => {});
-    rings.remove();
+    await done;
+    water.remove();
     return;
   }
   // Without view transitions: the new background spreads from the drop, then the page switches under it
   const wipe = document.createElement("div");
   wipe.className = "theme-wipe";
-  wipe.style.background = then["--bg"];
-  document.body.append(wipe, rings);
+  wipe.style.background = lookTokens(next, wantsDark(next))["--bg"];
   drop.remove();
-  const done = ripple();
-  await wipe.animate({ clipPath: clip }, { ...spread, fill: "forwards" }).finished;
+  shade.remove();
+  document.body.append(wipe, water);
+  const done = splash();
+  await wipe.animate(clip, { ...spread, fill: "forwards" }).finished;
   saveLook(next);
   await wipe.animate({ opacity: [1, 0] }, { duration: 260, fill: "forwards" }).finished;
   wipe.remove();
-  await Promise.all(done).catch(() => {});
-  rings.remove();
+  await done;
+  water.remove();
 }
 
 // A burst of petals from the Downloads tab when one of your downloads finishes

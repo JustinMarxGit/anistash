@@ -5,6 +5,15 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "1.4.2",
+        "title": "Slow motion",
+        "items": [
+            "The light/dark drop now falls in slow motion as a clear bead of water, its shadow gathering beneath it, "
+            "and splashes. The new colours rush out and then slow to a gentle tail, while rings of light and shadow "
+            "grow wider, softer and fainter as they cross the page.",
+        ],
+    },
+    {
         "version": "1.4.1",
         "title": "A drop into still water",
         "items": [

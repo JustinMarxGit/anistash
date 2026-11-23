@@ -186,7 +186,7 @@ Everything under **Settings → Appearance** is per person, and follows you to e
 - **Text and shapes:** heading and text fonts, text size, sharp/soft/round corners, comfortable or compact spacing,
   poster size, and frosted glass on or off.
 - **Motion:**
-  - **Switching light/dark:** a drop falling from the button into still water (the new colour spreads out in rings), a fade, or instant.
+  - **Switching light/dark:** a drop of water falling onto the button in slow motion (the new colour spreads out, slowing as it goes, with rings that fade as they travel), a fade, or instant.
   - **Changing pages:** slide, fade, zoom or none.
   - **Hovering a poster:** lift, tilt or glow.
   - **Behind the page:** paper grain, drifting colour or falling petals.
