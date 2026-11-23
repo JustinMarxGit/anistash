@@ -155,7 +155,8 @@ def public_user(row) -> dict:
     return {"id": row["id"], "username": row["username"], "role": row["role"], "disabled": bool(row["disabled"]),
             "must_change_password": bool(row["must_change_password"]), "created_at": row["created_at"],
             "last_login_at": row["last_login_at"], "media_user_id": row["media_user_id"],
-            "media_user_name": row["media_user_name"]}
+            "media_user_name": row["media_user_name"], "auth_source": row["auth_source"],
+            "external_id": row["external_id"]}
 
 
 def has_admin() -> bool:
@@ -234,6 +235,8 @@ def set_admin(username: str, password: str) -> int:
     as admin (used by setup and `anistash-setup --reset-password`)."""
     row = db.query_one("SELECT id FROM users WHERE username = ?", (username.strip(),))
     if row:
+        # A Jellyfin account becomes a password account again, so the console always gets you back in
+        db.execute("UPDATE users SET auth_source = 'local', external_id = '' WHERE id = ?", (row["id"],))
         set_password(row["id"], password)
         with db.tx() as conn:
             conn.execute("UPDATE users SET role = 'admin', disabled = 0 WHERE id = ?", (row["id"],))
@@ -260,24 +263,46 @@ def create_session(user_id: int, ip: str = "", user_agent: str = "") -> str:
     return token
 
 
-def login(username: str, password: str, ip: str = "", user_agent: str = "") -> str:
-    """Returns a new session token or raises AuthError with a message safe to show."""
-    username = (username or "").strip()[:64]
+WRONG = "Wrong username or password."
+
+
+def check_lock(username: str, ip: str) -> None:
     wait = locked_for(username, ip)
     if wait:
         audit(username or "-", "login_locked", "", ip)
         raise AuthError(f"Too many failed logins. Try again in {max(1, wait // 60)} minute(s).")
-    row = db.query_one("SELECT * FROM users WHERE username = ?", (username,)) if username else None
-    ok = verify_password(password or "", row["password_hash"] if row else _DUMMY_HASH)
-    if not row or not ok or row["disabled"]:
-        _record_failure(username, ip)
-        audit(username or "-", "login_failed", "account disabled" if row and ok else "", ip)
-        raise AuthError("Wrong username or password.")
+
+
+def fail(username: str, ip: str, detail: str = "") -> None:
+    """A failed sign-in: counted toward the lockout and logged."""
+    _record_failure(username, ip)
+    audit(username or "-", "login_failed", detail, ip)
+
+
+def succeed(row, ip: str, user_agent: str) -> str:
+    db.execute("DELETE FROM login_attempts WHERE key = ?", (f"user:{row['username'].lower()}",))
+    audit(row["username"], "login", "Jellyfin" if row["auth_source"] == "jellyfin" else "", ip)
+    return create_session(row["id"], ip, user_agent)
+
+
+def find_user(username: str):
+    return db.query_one("SELECT * FROM users WHERE username = ?", (username,)) if username else None
+
+
+def login(username: str, password: str, ip: str = "", user_agent: str = "") -> str:
+    """Sign-in with an AniStash password. Returns a new session token or raises AuthError with
+    a message safe to show. (Jellyfin accounts sign in through jellyfin_auth.login.)"""
+    username = (username or "").strip()[:64]
+    check_lock(username, ip)
+    row = find_user(username)
+    local = row is not None and row["auth_source"] == "local"
+    ok = verify_password(password or "", row["password_hash"] if local else _DUMMY_HASH)
+    if not local or not ok or row["disabled"]:
+        fail(username, ip, "account disabled" if local and ok else "")
+        raise AuthError(WRONG)
     if needs_rehash(row["password_hash"]):
         db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(password), row["id"]))
-    db.execute("DELETE FROM login_attempts WHERE key = ?", (f"user:{username.lower()}",))
-    audit(row["username"], "login", "", ip)
-    return create_session(row["id"], ip, user_agent)
+    return succeed(row, ip, user_agent)
 
 
 def session_user(token: str | None):

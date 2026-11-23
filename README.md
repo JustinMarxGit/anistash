@@ -56,7 +56,8 @@ It runs in its own Proxmox LXC, created with one command, and works on phones as
   Never a full scan.
 - **Follow shows:** new episodes (and new seasons) download by themselves, timed around each broadcast.
 - **Download locations:** SMB or NFS shares, or local folders, added and tested from the web UI.
-- **Multi-user:** admin, member and viewer roles, with careful security (see below).
+- **Multi-user:** admin, member and viewer roles, with careful security (see below). Jellyfin users can sign
+  in with their Jellyfin account once an admin enables them.
 - **Updates from the web page:** one click (or automatically), with live progress and automatic rollback.
 - **Your look:** a light/dark switch at the top, and under Settings → Appearance colour schemes drawn from Sanzo
   Wada's *A Dictionary of Color Combinations* (1933), or any colour you like. Each person's choice is their own and
@@ -175,6 +176,27 @@ Settings → **Users** (admins only) is where you add accounts and give each per
 | **Admin** | everything: users, download locations, media server, settings, updates |
 | **Member** | browse, search and download; cancel/retry/reorder **their own** downloads |
 | **Viewer** | browse and search only |
+
+### Signing in with Jellyfin
+
+When Jellyfin is your media server, the people on it can sign in to AniStash with their **Jellyfin username and
+password**: no separate AniStash password.
+
+- **Off until you enable them:** under Settings → Users → *Jellyfin users*, everyone on your Jellyfin server is
+  listed with their Jellyfin picture. Nobody can get in until an admin presses **Enable**, which gives them the
+  *member* role by default (change it right there).
+- **Access requests:** someone whose Jellyfin password is right but who isn't enabled yet sees "isn't enabled
+  yet", and the request shows up for admins (with a badge on Users).
+- **Same name as an AniStash account:** **Link** switches that account to Jellyfin sign-in. It keeps its role,
+  follows, downloads and look; its AniStash password stops working.
+- **Kept in step:** once an hour, people disabled or deleted in Jellyfin lose access here too, and name or picture
+  changes are picked up. Their *Picked for you* uses their own Jellyfin watch history automatically.
+- **Safe by design:** AniStash asks Jellyfin to check the password, then ends the session that check created; the
+  password is never stored or logged. Wrong passwords get the usual answer and count toward the same lockout, so
+  AniStash can't be used to guess Jellyfin passwords. `anistash-setup --reset-password` turns a Jellyfin account
+  back into a password account if you ever need to get in without Jellyfin.
+
+Plex sign-in isn't supported (Plex accounts sign in through plex.tv).
 
 New users get a temporary password (there's a *Generate* button) and must choose their own at first login. Admins can reset passwords, change roles, disable or delete accounts. There is always at least one active admin.
 

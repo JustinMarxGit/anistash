@@ -29,7 +29,18 @@ CREATE TABLE IF NOT EXISTS users (
     media_user_id        TEXT NOT NULL DEFAULT '',   -- their Jellyfin/Plex account, '-' = don't use, '' = match by name
     media_user_name      TEXT NOT NULL DEFAULT '',
     theme_mode           TEXT NOT NULL DEFAULT 'system', -- 'system' (follow the device), 'light' or 'dark'
-    accent               TEXT NOT NULL DEFAULT ''        -- '#rrggbb' accent colour; '' = AniStash vermilion
+    accent               TEXT NOT NULL DEFAULT '',       -- '#rrggbb' accent colour; '' = AniStash vermilion
+    auth_source          TEXT NOT NULL DEFAULT 'local',  -- 'local' (AniStash password) or 'jellyfin' (Jellyfin sign-in)
+    external_id          TEXT NOT NULL DEFAULT '',       -- the Jellyfin user Id for Jellyfin sign-in
+    avatar_tag           TEXT NOT NULL DEFAULT ''        -- Jellyfin's picture version, '' = none
+);
+
+-- Jellyfin users who signed in correctly but haven't been given access yet
+CREATE TABLE IF NOT EXISTS jellyfin_requests (
+    external_id  TEXT PRIMARY KEY,
+    username     TEXT NOT NULL,
+    requested_at INTEGER NOT NULL,
+    dismissed    INTEGER NOT NULL DEFAULT 0
 );
 
 -- Only a SHA-256 of each session token is stored, so a copy of the database can't log anyone in
@@ -230,6 +241,9 @@ MIGRATIONS = [
     ("users", "media_user_name", "TEXT NOT NULL DEFAULT ''"),
     ("users", "theme_mode", "TEXT NOT NULL DEFAULT 'system'"),
     ("users", "accent", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "auth_source", "TEXT NOT NULL DEFAULT 'local'"),
+    ("users", "external_id", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "avatar_tag", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -243,6 +257,7 @@ CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user_id);
 CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions (expires_at);
 CREATE INDEX IF NOT EXISTS follows_due ON follows (status, next_check);
 CREATE INDEX IF NOT EXISTS cache_expiry ON cache (expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS users_external ON users (external_id) WHERE external_id != '';
 """
 
 

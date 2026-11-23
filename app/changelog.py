@@ -5,6 +5,19 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "1.3.0",
+        "title": "Sign in with Jellyfin",
+        "items": [
+            "People on your Jellyfin server can sign in to AniStash with their Jellyfin username and password, once "
+            "an admin enables them under Settings → Users → Jellyfin users.",
+            "Someone who tries before being enabled shows up there as an access request.",
+            "An AniStash account with the same name can be linked, so it switches to Jellyfin sign-in and keeps "
+            "everything.",
+            "People disabled in Jellyfin lose access here too, and their Picked for you uses their own Jellyfin "
+            "watching automatically.",
+        ],
+    },
+    {
         "version": "1.2.0",
         "title": "Colours from Sanzo Wada",
         "items": [

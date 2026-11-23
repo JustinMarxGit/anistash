@@ -18,8 +18,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import MutableHeaders
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import (anicli, anilist, auth, changelog, config, db, follows, jobs, library, locations, mediaserver, net,
-               recommend, setup, shows, updates)
+from . import (anicli, anilist, auth, changelog, config, db, follows, jellyfin_auth, jobs, library, locations,
+               mediaserver, net, recommend, setup, shows, updates)
 from .naming import base_title, number_seasons
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -44,6 +44,7 @@ async def housekeeping() -> None:
         try:
             db.prune_cache()
             anicli.prune_cache()
+            await jellyfin_auth.sync()
         except Exception:
             log.exception("Housekeeping failed")
         await asyncio.sleep(3600)
@@ -204,6 +205,7 @@ def _me(user) -> dict | None:
     return {"id": user["id"], "username": user["username"], "role": user["role"],
             "must_change_password": bool(user["must_change_password"]), "tour_done": bool(user["tour_done"]),
             "title_lang": user["title_lang"], "theme_mode": user["theme_mode"], "accent": user["accent"],
+            "auth_source": user["auth_source"],
             "whats_new": bool(changelog.since(user["last_seen_version"], config.VERSION))}
 
 
@@ -212,17 +214,18 @@ def _me(user) -> dict | None:
 @app.get("/api/status")
 async def status(request: Request):
     user = request.state.user
-    return {**setup.state(), "logged_in": user is not None, "user": _me(user),
+    return {**setup.state(), "logged_in": user is not None, "user": _me(user), "jellyfin_login": jellyfin_auth.available(),
             "username": user["username"] if user else None}
 
 
 @app.post("/api/login")
 async def login(request: Request, username: str = Body(...), password: str = Body(...)):
     try:
-        token = await asyncio.to_thread(auth.login, username, password, client_ip(request),
-                                        request.headers.get("user-agent", ""))
+        token = await jellyfin_auth.login(username, password, client_ip(request), request.headers.get("user-agent", ""))
     except auth.AuthError as exc:
         raise HTTPException(401, str(exc))
+    except mediaserver.MediaServerError as exc:
+        raise HTTPException(503, str(exc))
     return _session_response({"ok": True}, token, request)
 
 
@@ -274,6 +277,8 @@ async def setup_complete(user=ADMIN):
 
 @app.post("/api/account/password")
 async def change_password(request: Request, current: str = Body(...), new: str = Body(...), user=VIEWER):
+    if user["auth_source"] == "jellyfin":
+        raise HTTPException(400, "You sign in with your Jellyfin account. Change your password in Jellyfin.")
     if not await asyncio.to_thread(auth.verify_password, current, user["password_hash"]):
         auth.audit(user["username"], "password_change_failed", "wrong current password", client_ip(request))
         raise HTTPException(400, "Current password is wrong.")
@@ -375,6 +380,8 @@ async def edit_user(request: Request, user_id: int, role: str | None = Body(None
 async def reset_user_password(request: Request, user_id: int, password: str = Body(...),
                               must_change: bool = Body(True), user=ADMIN):
     target = auth.get_user(user_id)
+    if target["auth_source"] == "jellyfin":
+        raise HTTPException(400, f"{target['username']} signs in with Jellyfin. Their password is changed in Jellyfin.")
     await asyncio.to_thread(auth.set_password, user_id, password, must_change)
     auth.audit(user["username"], "password_reset", target["username"], client_ip(request))
     return {"ok": True}
@@ -563,6 +570,64 @@ async def recommend_season(user=VIEWER):
 async def recommend_for_you(user=VIEWER):
     """Airing shows picked from what this person follows, queued and has in the library."""
     return await recommend.for_you(user)
+
+
+# Jellyfin sign-in (admins) -----------------------------------------------------------------------
+
+@app.get("/api/jellyfin/users")
+async def jellyfin_users(user=ADMIN):
+    """Everyone on the Jellyfin server and whether they can use AniStash."""
+    if not jellyfin_auth.available():
+        return {"available": False, "users": [], "requests": 0}
+    try:
+        return {"available": True, **await jellyfin_auth.overview()}
+    except mediaserver.MediaServerError as exc:
+        return {"available": True, "users": [], "requests": len(jellyfin_auth.requests()), "error": str(exc)}
+
+
+@app.get("/api/jellyfin/requests")
+async def jellyfin_requests(user=ADMIN):
+    """Jellyfin users waiting for access (cheap: for the badge on Settings → Users)."""
+    return {"requests": jellyfin_auth.requests()}
+
+
+@app.post("/api/jellyfin/users/{external_id}/{action}")
+async def jellyfin_user_action(request: Request, external_id: str, action: str, role: str = Body("member", embed=True),
+                               user=ADMIN):
+    if action == "enable":
+        await jellyfin_auth.enable(external_id, role)
+    elif action == "link":
+        await jellyfin_auth.link(external_id)
+    elif action == "disable":
+        jellyfin_auth.disable(external_id)
+    elif action == "dismiss":
+        jellyfin_auth.dismiss(external_id)
+    else:
+        raise HTTPException(404)
+    target = db.query_one("SELECT username FROM users WHERE external_id = ?", (external_id,))
+    auth.audit(user["username"], f"jellyfin_{action}", (target or {"username": external_id})["username"] +
+               (f" as {role}" if action == "enable" else ""), client_ip(request))
+    return {"ok": True}
+
+
+@app.get("/api/jellyfin/users/{external_id}/avatar")
+async def jellyfin_avatar(external_id: str, user=ADMIN):
+    return await _avatar_response(external_id)
+
+
+@app.get("/api/account/avatar")
+async def my_avatar(user=VIEWER):
+    if user["auth_source"] != "jellyfin" or not user["avatar_tag"]:
+        raise HTTPException(404)
+    return await _avatar_response(user["external_id"])
+
+
+async def _avatar_response(external_id: str) -> Response:
+    found = await jellyfin_auth.avatar(external_id)
+    if not found:
+        raise HTTPException(404)
+    content, kind = found
+    return Response(content, media_type=kind, headers={"Cache-Control": "private, max-age=86400"})
 
 
 @app.get("/api/genres")

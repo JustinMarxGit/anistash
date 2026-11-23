@@ -447,6 +447,10 @@ const TIPS = [
   ['.swatch', "Use this colour for buttons and highlights (only you see it)"],
   ['#accent-picker', "Pick any colour you like"],
   ['.sn-back', "Back to the list of settings"],
+  ['[data-jf="enable"]', "Let this Jellyfin user sign in to AniStash with the role on the left"],
+  ['[data-jf="link"]', "Switch the AniStash account with this name to Jellyfin sign-in (it keeps its data)"],
+  ['[data-jf="disable"]', "Stop this Jellyfin user from signing in to AniStash"],
+  ['[data-jf="dismiss"]', "Hide this request without giving access"],
   ['#mal-clear', "Forget the saved MyAnimeList Client ID (Jikan is used instead)"],
   ['#check-updates', "Ask GitHub now whether a newer AniStash is out (normally checked every few hours)"],
   ['#auto-update', "Install new AniStash versions by themselves, while nothing is downloading"],
@@ -813,7 +817,7 @@ function loginView() {
     <form class="login card" id="login">
       <svg class="seal" aria-hidden="true"><use href="#logo"/></svg>
       <h1>Welcome back</h1>
-      <p class="muted">Sign in with your AniStash account.</p>
+      <p class="muted">Sign in with your AniStash${status?.jellyfin_login ? " or Jellyfin" : ""} account.</p>
       <div id="err"></div>
       <label class="field"><span>Username</span><input type="text" name="username" autocomplete="username" autocapitalize="off" required></label>
       <label class="field"><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label>
@@ -2491,6 +2495,22 @@ async function testMediaServer(form) {
 
 function accountSection() {
   const role = status.user?.role || "";
+  if (status.user?.auth_source === "jellyfin") {
+    return `
+    <div class="card" id="pw"><h2>Signed in with Jellyfin</h2>
+      <div class="row" style="flex-wrap:nowrap">
+        <img class="avatar big" src="/api/account/avatar" alt="" data-fallback="${esc(status.username.slice(0, 1).toUpperCase())}">
+        <p style="margin:0">You're <b>${esc(status.username)}</b> · ${esc(role)}. You sign in with your Jellyfin username and password;
+          change your password in Jellyfin.</p>
+      </div>
+    </div>
+    <div id="media-link"></div>
+    <div class="card"><h2>Signed-in devices</h2>
+      <div id="sessions" class="muted small">${loading()}</div>
+      <div class="row" style="margin-top:.75rem"><button type="button" id="logout" class="ghost">Log out</button>
+        <button type="button" id="logout-all" class="danger small">Log out on all devices</button></div>
+    </div>`;
+  }
   return `
     <form class="card" id="pw"><h2>Password</h2>
       <p class="muted">Signed in as <b>${esc(status.username)}</b> · ${esc(role)}</p>
@@ -2621,6 +2641,10 @@ function bindAccount() {
     try { await busy(e.submitter, () => api("/api/account/password", { method: "POST", body: formData(e.target) })); toast("Password changed. Other devices were signed out."); e.target.reset(); }
     catch (err) { toast(err.message, true); }
   });
+  // No Jellyfin picture: show the first letter instead
+  $("#pw img.avatar")?.addEventListener("error", (e) => {
+    e.target.outerHTML = `<span class="avatar big">${esc(e.target.dataset.fallback)}</span>`;
+  });
   $("#logout").addEventListener("click", async () => { await api("/api/logout", { method: "POST" }); location.hash = "#/login"; });
   $("#logout-all").addEventListener("click", async () => {
     if (!confirm("Log out everywhere, including this device?")) return;
@@ -2661,6 +2685,7 @@ async function usersPanel(container) {
       <div class="loc" data-user="${u.id}">
         <div style="min-width:0">
           <b>${esc(u.username)}</b> <span class="pill ${u.role === "admin" ? "accent" : ""}">${esc(u.role)}</span>
+          ${u.auth_source === "jellyfin" ? `<span class="pill" data-tip="Signs in with their Jellyfin username and password">Jellyfin</span>` : ""}
           ${u.disabled ? `<span class="pill bad">disabled</span>` : ""}${u.must_change_password ? ` <span class="pill warn">must change password</span>` : ""}
           ${u.id === status.user.id ? `<span class="pill">you</span>` : ""}
           <div class="muted small">Last login ${esc(when(u.last_login_at))}</div>
@@ -2672,7 +2697,7 @@ async function usersPanel(container) {
           ${u.id === status.user.id ? "" : `
             <select class="small" data-role aria-label="Role for ${esc(u.username)}" style="min-height:36px;width:auto">
               ${data.roles.map((r) => `<option value="${r}" ${r === u.role ? "selected" : ""}>${r}</option>`).join("")}</select>
-            <button class="small" data-act="password">Reset password</button>
+            ${u.auth_source === "jellyfin" ? "" : `<button class="small" data-act="password">Reset password</button>`}
             <button class="small" data-act="${u.disabled ? "enable" : "disable"}">${u.disabled ? "Enable" : "Disable"}</button>
             <button class="small danger" data-act="delete">Delete</button>`}
         </div>
@@ -2744,6 +2769,69 @@ async function usersPanel(container) {
   }
 }
 
+// Settings → Users: everyone on the Jellyfin server, and whether they can sign in here
+const JF_STATE = { none: ["No access", ""], enabled: ["Can sign in", "ok"], disabled: ["Access turned off", "warn"],
+  name_taken: ["Has an AniStash account", ""] };
+
+async function jellyfinPanel(container, onChange) {
+  let data;
+  try { data = await api("/api/jellyfin/users"); } catch { return; }
+  const card = container.closest(".card");
+  if (!data.available) {
+    card.hidden = false;
+    container.innerHTML = `<p class="hint">Set up Jellyfin under <a href="#/settings?s=media">Media server</a> to let people sign in with their Jellyfin account.</p>`;
+    return;
+  }
+  card.hidden = false;
+  if (data.error) container.insertAdjacentHTML("beforebegin", `<div class="warn-box">${esc(data.error)}</div>`);
+  const roles = ["member", "viewer", "admin"];
+  container.innerHTML = data.users.length ? data.users.map((u) => {
+    const [label, cls] = u.disabled ? ["Disabled in Jellyfin", "bad"] : JF_STATE[u.state];
+    let actions = "";
+    if (u.disabled) actions = "";
+    else if (u.state === "none" || u.state === "disabled") {
+      actions = `<select class="small" data-jf-role aria-label="Role for ${esc(u.name)}" style="min-height:36px;width:auto">
+          ${roles.map((r) => `<option value="${r}" ${r === (u.role || "member") ? "selected" : ""}>${r}</option>`).join("")}</select>
+        <button class="small primary" data-jf="enable">Enable</button>`;
+    } else if (u.state === "enabled") {
+      actions = `<span class="muted small">as ${esc(u.role)}</span><button class="small" data-jf="disable">Turn off</button>`;
+    } else if (u.state === "name_taken") {
+      actions = `<button class="small primary" data-jf="link">Link</button>`;
+    }
+    if (u.requested_at && u.state !== "enabled") actions += `<button class="small ghost" data-jf="dismiss">Dismiss</button>`;
+    return `<div class="loc jf-user" data-jf-id="${esc(u.id)}" data-jf-name="${esc(u.name)}">
+      <div class="row" style="flex-wrap:nowrap;min-width:0">
+        ${u.image ? `<img class="avatar" src="/api/jellyfin/users/${encodeURIComponent(u.id)}/avatar" alt="" loading="lazy">`
+                  : `<span class="avatar">${esc(u.name.slice(0, 1).toUpperCase())}</span>`}
+        <div style="min-width:0">
+          <b>${esc(u.name)}</b> ${u.is_admin ? `<span class="pill" data-tip="An administrator on the Jellyfin server (that gives no extra rights here)">Jellyfin admin</span>` : ""}
+          ${u.requested_at ? `<span class="pill accent" data-tip="Tried to sign in ${esc(relTime(u.requested_at))}">Wants access</span>` : ""}
+          <div class="small"><span class="pill ${cls}">${label}</span>
+            ${u.state === "name_taken" ? `<span class="muted"> · Link switches ${esc(u.name)}'s AniStash account to Jellyfin sign-in</span>` : ""}</div>
+        </div>
+      </div>
+      <div class="row" style="align-content:start">${actions}</div>
+    </div>`;
+  }).join("") : `<p class="muted">No users on the Jellyfin server.</p>`;
+
+  container.onclick = async (e) => {
+    const b = e.target.closest("[data-jf]");
+    if (!b) return;
+    const row = b.closest("[data-jf-id]");
+    const id = row.dataset.jfId, name = row.dataset.jfName, act = b.dataset.jf;
+    if (act === "link" && !confirm(`Switch the AniStash account "${name}" to Jellyfin sign-in?\n\nIt keeps its role, follows, downloads and look. Its AniStash password stops working, and it's signed out everywhere; from now on ${name} signs in with their Jellyfin password.`)) return;
+    if (act === "disable" && !confirm(`Turn off AniStash for ${name}? They're signed out and can't sign in again until you enable them.`)) return;
+    try {
+      const role = row.querySelector("[data-jf-role]")?.value || "member";
+      await busy(b, () => api(`/api/jellyfin/users/${encodeURIComponent(id)}/${act}`, { method: "POST", body: { role } }));
+      toast({ enable: `${name} can now sign in with Jellyfin`, link: `${name} now signs in with Jellyfin`,
+        disable: `${name} can't sign in any more`, dismiss: "Dismissed" }[act]);
+      jellyfinPanel(container, onChange);
+      onChange?.();
+    } catch (err) { toast(err.message, true); }
+  };
+}
+
 const AUDIT_LABELS = {
   login: "Logged in", login_failed: "Failed login", login_locked: "Login blocked (too many tries)", logout: "Logged out",
   logout_everywhere: "Logged out everywhere", password_changed: "Changed password", password_change_failed: "Wrong current password",
@@ -2752,6 +2840,8 @@ const AUDIT_LABELS = {
   location_changed: "Changed location", location_removed: "Removed location", queued: "Queued download",
   update_started: "Started update", admin_set: "Set admin (console)",
   follow_added: "Followed", follow_removed: "Unfollowed", media_account_linked: "Linked media server account",
+  access_requested: "Asked for access (Jellyfin)", jellyfin_enable: "Enabled Jellyfin user", jellyfin_link: "Linked to Jellyfin",
+  jellyfin_disable: "Turned off Jellyfin user", jellyfin_dismiss: "Dismissed access request", jellyfin_disabled_sync: "Disabled in Jellyfin",
 };
 
 async function auditPanel(container) {
@@ -2801,6 +2891,12 @@ async function settingsView() {
       </section>
     </div>`;
   if (can.admin()) {
+    api("/api/jellyfin/requests").then(({ requests }) => {
+      if (!requests.length) return;
+      const item = $('[data-s="users"]');
+      item?.querySelector("b").insertAdjacentHTML("beforeend", ` <span class="badge-dot">${requests.length}</span>`);
+      if (item) item.querySelector("[data-desc]").textContent = `${requests.length} Jellyfin ${requests.length === 1 ? "user wants" : "users want"} access`;
+    }).catch(() => {});
     api("/api/system/update-status").then((u) => {
       if (!u.update_available) return;
       const item = $('[data-s="updates"]');
@@ -2903,7 +2999,12 @@ const SETTINGS_RENDER = {
   users(el) {
     el.innerHTML = `<div class="card"><h2>Who can use AniStash</h2>
       <p class="muted small">Admins manage everything. Members can browse and download. Viewers can only browse.</p>
-      <div id="users"></div></div>`;
+      <div id="users"></div></div>
+      <div class="card" id="jellyfin-card" hidden><h2>Jellyfin users</h2>
+      <p class="muted small">People on your Jellyfin server can sign in to AniStash with their Jellyfin username and password,
+        once you enable them here. Until then they can't get in.</p>
+      <div id="jellyfin-users">${loading()}</div></div>`;
+    jellyfinPanel($("#jellyfin-users"), () => usersPanel($("#users")));
     return usersPanel($("#users"));
   },
 
