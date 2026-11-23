@@ -742,6 +742,54 @@ document.addEventListener("pointerdown", (e) => {
   tipTimer = setTimeout(() => { longPressed = true; showTip(target); setTimeout(hideTip, 3000); }, 500);
 });
 for (const type of ["pointerup", "pointercancel"]) document.addEventListener(type, () => clearTimeout(tipTimer));
+
+// On a computer, sideways rows (posters, genres, seasons) can be dragged with the mouse, and glide on a
+// little when you let go. A drag doesn't also open the poster or press the button it started on
+const DRAG_ROWS = ".shelf, .chips-row, .tabs, .studio-parts";
+let rowDrag = null;
+document.addEventListener("pointerdown", (e) => {
+  if (e.pointerType !== "mouse" || e.button !== 0) return;
+  const row = e.target.closest(DRAG_ROWS);
+  if (!row || row.scrollWidth <= row.clientWidth + 1 || e.target.closest("input, select, textarea")) return;
+  rowDrag = { row, id: e.pointerId, x: e.clientX, left: row.scrollLeft, moved: false, v: 0, t: e.timeStamp, lastX: e.clientX };
+});
+document.addEventListener("pointermove", (e) => {
+  if (!rowDrag || e.pointerId !== rowDrag.id) return;
+  const dx = e.clientX - rowDrag.x;
+  if (!rowDrag.moved) {
+    if (Math.abs(dx) < 6) return;  // a click, not a drag (yet)
+    rowDrag.moved = true;
+    rowDrag.row.classList.add("grabbing");
+    rowDrag.row.setPointerCapture(e.pointerId);
+    getSelection()?.removeAllRanges();
+  }
+  rowDrag.row.scrollLeft = rowDrag.left - dx;
+  rowDrag.v = (e.clientX - rowDrag.lastX) / Math.max(1, e.timeStamp - rowDrag.t);  // px per ms
+  rowDrag.t = e.timeStamp;
+  rowDrag.lastX = e.clientX;
+});
+function endRowDrag(e) {
+  if (!rowDrag || e.pointerId !== rowDrag.id) return;
+  const { row, moved, t } = rowDrag;
+  const v = e.timeStamp - t > 80 ? 0 : rowDrag.v;  // held still before letting go: no glide
+  rowDrag = null;
+  if (!moved) return;
+  const swallow = (ev) => { ev.preventDefault(); ev.stopPropagation(); };
+  window.addEventListener("click", swallow, true);
+  setTimeout(() => window.removeEventListener("click", swallow, true));
+  let speed = v * 16;  // px per frame
+  const step = () => {
+    if (Math.abs(speed) < 0.5 || rowDrag?.row === row) return row.classList.remove("grabbing");  // snapping settles it on a poster
+    row.scrollLeft -= speed;
+    speed *= 0.93;
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+document.addEventListener("pointerup", endRowDrag);
+document.addEventListener("pointercancel", endRowDrag);
+// Links and pictures in a row would otherwise start a browser drag instead
+document.addEventListener("dragstart", (e) => { if (e.target.closest?.(DRAG_ROWS)) e.preventDefault(); });
 // A long press shows the explanation; it shouldn't also press the button
 document.addEventListener("click", (e) => {
   if (longPressed) { e.preventDefault(); e.stopPropagation(); longPressed = false; }

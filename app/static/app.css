@@ -453,6 +453,10 @@ input::placeholder { color: var(--muted); opacity: .8; }
 
 /* Genres, Discover and anime pages */
 .chips-row { display: flex; gap: .45rem; overflow-x: auto; scrollbar-width: none; margin: 0 -16px 1.6rem; padding: 2px 16px 4px; }
+/* Sideways rows can be dragged with a mouse (app.js) */
+@media (hover: hover) and (pointer: fine) { :is(.shelf, .chips-row, .tabs, .studio-parts) { cursor: grab; } }
+.grabbing { cursor: grabbing !important; user-select: none; scroll-snap-type: none !important; scroll-behavior: auto !important; }
+.grabbing * { cursor: grabbing !important; }
 .chips-row::-webkit-scrollbar { display: none; }
 .chips-row:not(.wrap) { scroll-behavior: smooth; --fade-l: 0px; --fade-r: 0px;
   -webkit-mask-image: linear-gradient(90deg, transparent, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent);

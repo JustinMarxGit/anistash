@@ -5,6 +5,14 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "2.0.1",
+        "title": "Drag the rows",
+        "items": [
+            "On a computer, rows that scroll sideways (posters, genres, seasons) can be dragged with the mouse, and glide on "
+            "a little when you let go. A drag never opens the poster it started on.",
+        ],
+    },
+    {
         "version": "2.0.0",
         "title": "Make it entirely yours",
         "items": [
