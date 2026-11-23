@@ -18,8 +18,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import MutableHeaders
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import (anicli, anilist, auth, changelog, config, db, follows, jellyfin_auth, jobs, library, locations,
-               mediaserver, net, recommend, setup, shows, updates)
+from . import (anicli, anilist, auth, changelog, config, db, files, follows, jellyfin_auth, jobs, library, locations,
+               look, mediaserver, net, recommend, setup, shows, updates)
 from .naming import base_title, number_seasons
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -29,6 +29,7 @@ log = logging.getLogger("anistash")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init()
+    look.migrate()
     tasks = [asyncio.create_task(job()) for job in (jobs.worker, follows.scheduler, updates.scheduler, housekeeping,
                                                        recommend.keep_fresh)]
     yield
@@ -55,11 +56,11 @@ app = FastAPI(title="AniStash", version=config.VERSION, lifespan=lifespan, docs_
 
 # Reachable before setup is finished (by an admin)
 SETUP_ROUTES = ("/api/setup", "/api/locations", "/api/mediaserver", "/api/settings", "/api/system", "/api/account")
-PUBLIC_ROUTES = ("/api/status", "/api/login", "/api/logout")
+PUBLIC_ROUTES = ("/api/status", "/api/login", "/api/logout", "/api/look/files/")
 # Still reachable while the user must change their password
 PASSWORD_CHANGE_ROUTES = ("/api/status", "/api/logout", "/api/account/password")
 USER_ERRORS = (anicli.AniCliError, locations.LocationError, mediaserver.MediaServerError, jobs.QueueError,
-               setup.SetupError, auth.AuthError, follows.FollowError, ValueError)
+               setup.SetupError, auth.AuthError, follows.FollowError, files.FileError, ValueError)
 UNSAFE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
 
 SECURITY_HEADERS = {
@@ -215,6 +216,7 @@ def _me(user) -> dict | None:
 async def status(request: Request):
     user = request.state.user
     return {**setup.state(), "logged_in": user is not None, "user": _me(user), "jellyfin_login": jellyfin_auth.available(),
+            "look": _effective_look(user),
             "username": user["username"] if user else None}
 
 
@@ -393,6 +395,7 @@ async def remove_user(request: Request, user_id: int, user=ADMIN):
     if user_id == user["id"]:
         raise HTTPException(400, "You can't delete your own account.")
     auth.delete_user(user_id)
+    files.remove_all(user_id)
     auth.audit(user["username"], "user_deleted", target["username"], client_ip(request))
     return {"ok": True}
 
@@ -617,9 +620,98 @@ async def jellyfin_avatar(external_id: str, user=ADMIN):
 
 @app.get("/api/account/avatar")
 async def my_avatar(user=VIEWER):
+    """Your uploaded avatar, else your Jellyfin picture."""
+    found = files.find(user["id"], "avatar")
+    if found:
+        return FileResponse(found[0], media_type=found[1], headers={"Cache-Control": "private, max-age=86400"})
     if user["auth_source"] != "jellyfin" or not user["avatar_tag"]:
         raise HTTPException(404)
     return await _avatar_response(user["external_id"])
+
+
+# Looks: colours, background, fonts, motion (per person; admins can set the site default) -------
+
+def _effective_look(user) -> dict:
+    """The look to show: yours, or the site default (also on the login page), with picture URLs."""
+    row = auth.get_user(user["id"]) if user else None
+    current, own = look.for_user(row)
+    owner = user["id"] if own else "default"
+    urls = files.urls(owner)
+    if user and own and not urls["avatar"] and user["auth_source"] == "jellyfin" and user["avatar_tag"]:
+        urls["avatar"] = f"/api/account/avatar?v={user['avatar_tag']}"
+    elif user and not own:
+        mine = files.urls(user["id"])["avatar"]  # an avatar is always your own
+        urls["avatar"] = mine or (f"/api/account/avatar?v={user['avatar_tag']}" if user["avatar_tag"] else "")
+    elif not user:
+        urls["avatar"] = ""
+    return {**current, "own": own, "files": urls}
+
+
+@app.get("/api/account/look")
+async def get_look(user=VIEWER):
+    return {"look": _effective_look(user), "default": look.default_look(), "my_files": files.urls(user["id"])}
+
+
+@app.put("/api/account/look")
+async def put_look(data: dict = Body(..., embed=False), user=VIEWER):
+    look.save(user["id"], data.get("look"))
+    return {"look": _effective_look(user)}
+
+
+@app.delete("/api/account/look")
+async def reset_look(user=VIEWER):
+    """Back to the site's default look (your pictures are kept, for if you come back)."""
+    look.reset(user["id"])
+    return {"look": _effective_look(user)}
+
+
+@app.put("/api/look/default")
+async def put_default_look(request: Request, data: dict = Body(..., embed=False), user=ADMIN):
+    """Makes this look (and its pictures) the default for everyone who hasn't chosen their own,
+    and for the login page."""
+    saved = look.set_default(data.get("look"))
+    if data.get("with_files", True):
+        files.copy_to_default(user["id"])
+    auth.audit(user["username"], "default_look_set", "", client_ip(request))
+    return {"default": saved}
+
+
+@app.put("/api/account/files/{kind}")
+async def upload_file(request: Request, kind: str, user=VIEWER):
+    limit = files.KINDS.get(kind)
+    if limit is None:
+        raise HTTPException(404)
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > limit:
+            raise HTTPException(413, f"That picture is too big (the most for a {kind} is {limit // (1024 * 1024)} MB).")
+    files.save(user["id"], kind, bytes(body))
+    return {"files": files.urls(user["id"])}
+
+
+@app.delete("/api/account/files/{kind}")
+async def delete_file(kind: str, user=VIEWER):
+    files.remove(user["id"], kind)
+    return {"files": files.urls(user["id"])}
+
+
+@app.get("/api/account/files/{kind}")
+async def my_file(kind: str, user=VIEWER):
+    return _file_response(user["id"], kind)
+
+
+@app.get("/api/look/files/{kind}")
+async def default_file(kind: str):
+    """The site default look's pictures: public, because the login page shows them."""
+    return _file_response("default", kind)
+
+
+def _file_response(owner, kind: str) -> Response:
+    found = files.find(owner, kind)
+    if not found:
+        raise HTTPException(404)
+    return FileResponse(found[0], media_type=found[1], headers={"Cache-Control": "private, max-age=31536000"})
 
 
 async def _avatar_response(external_id: str) -> Response:

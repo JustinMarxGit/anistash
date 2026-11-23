@@ -112,30 +112,48 @@ function libraryBadge(m) {
 
 const icon = (name, cls = "") => `<svg class="i ${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
-// Light / dark and accent colour --------------------------------------------------------------
-// Each person's own: saved with their account (so it follows them to other devices) and in this
-// browser too, so the page doesn't flash the wrong colours while it loads.
+// Looks -------------------------------------------------------------------------------------------
+// Each person's own colours, light/dark, background picture, fonts, shapes and motion (Settings →
+// Appearance). Saved with their account (so it follows them everywhere) and in this browser, so
+// the page doesn't flash the wrong look while it loads. People without their own use the site's
+// default, which an admin can set.
 
-// The presets come from Sanzo Wada's "A Dictionary of Color Combinations" (Haishoku Sōkan, 1933):
-// each is one of his colours, shown with the two it's paired with in one of his numbered combinations.
-// [hex ('' = AniStash's own vermilion, Wada's Red Orange), name, combination No., [partner colours]]
-const ACCENTS = [
-  ["", "Red Orange", 164, [["#fcb315", "Orange Yellow"], ["#4f4086", "Violet"]]],
-  ["#f37f94", "Eosine Pink", 134, [["#9a72aa", "Light Mauve"], ["#59256a", "Red Violet"]]],
-  ["#d46d7a", "Old Rose", 162, [["#8fa071", "Rainette Green"], ["#b984af", "Lilac"]]],
-  ["#cc1236", "Carmine", 122, [["#fdbf68", "Cream Yellow"], ["#00978d", "Benzol Green"]]],
-  ["#f99d1b", "Yellow Orange", 151, [["#f5ecc2", "Sulpher Yellow"], ["#064f6e", "Vandar Poel's Blue"]]],
-  ["#437742", "Cossack Green", 135, [["#f5ecc2", "Sulpher Yellow"], ["#97acc8", "Salvia Blue"]]],
-  ["#00b49b", "Sea Green", 133, [["#82241f", "Vandyke Red"], ["#b09f36", "Citrine"]]],
-  ["#0093a5", "Cerulian Blue", 125, [["#d1b0a7", "Fawn"], ["#40456a", "Violet Blue"]]],
-  ["#5a82b3", "Olympic Blue", 157, [["#7d133a", "Pansy Purple"], ["#d6b43e", "Olive Ocher"]]],
-  ["#1c4286", "Deep Lyons Blue", 126, [["#ebd3a2", "Ivory Buff"], ["#e2b540", "Yellow Ocher"]]],
-  ["#a36aa5", "Aconite Violet", 187, [["#005b8d", "Helvetia Blue"], ["#c0a9b3", "Grayish Lavender"]]],
-  ["#34454c", "Slate Color", 140, [["#f3a257", "Golden Yellow"], ["#007190", "Antwarp Blue"]]],
-];
+const DEFAULT_LOOK = {
+  mode: "system", palette: { combo: null, colors: [], accent: 0, tint: -1 }, tint: 55,
+  bg_image: { on: false, dim: 45, blur: 0, fit: "cover" },
+  font: { heading: "bricolage", body: "onest", size: 100 },
+  corners: "soft", density: "comfortable", posters: "m", glass: true,
+  motion: { toggle: "circle", page: "slide", hover: "lift", ambient: "grain", celebrate: true, reduce: "system" },
+  files: { background: "", logo: "", avatar: "" },
+};
+// Favourite combinations from Sanzo Wada's "A Dictionary of Color Combinations" (1933); the whole
+// book (348 combinations) is in /static/wada.json
+const CURATED = [164, 134, 162, 122, 151, 135, 133, 125, 157, 126, 187, 140, 230, 326, 179, 285];
+const FONTS = {
+  bricolage: '"Bricolage", ui-sans-serif, system-ui, sans-serif',
+  onest: '"Onest", ui-sans-serif, system-ui, sans-serif',
+  system: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+  serif: 'ui-serif, "Iowan Old Style", Georgia, "Times New Roman", serif',
+  rounded: 'ui-rounded, "SF Pro Rounded", "Nunito", "Varela Round", system-ui, sans-serif',
+  mono: 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace',
+};
+// The neutral colours each look starts from (as in app.css), before its colours are mixed in
+const BASE = {
+  light: { "--bg": "#f5f2ec", "--bg-2": "#ede8df", "--surface": "#fffdf9", "--surface-2": "#ece7dd", "--border": "#ddd6c9",
+    "--border-strong": "#c9c0b0", "--text": "#1b1915", "--muted": "#6e685d", "--accent": "#e2401f", "--accent-hover": "#c93516",
+    "--accent-text": "#fffaf5", "--accent-soft": "rgb(226 64 31 / 10%)", "--ok": "#17865a", "--ok-soft": "rgb(23 134 90 / 11%)" },
+  dark: { "--bg": "#0d0e12", "--bg-2": "#121318", "--surface": "#16181e", "--surface-2": "#1f2129", "--border": "#2a2d37",
+    "--border-strong": "#3a3e4b", "--text": "#efebe4", "--muted": "#9b9ca5", "--accent": "#ff5b3a", "--accent-hover": "#ff7556",
+    "--accent-text": "#fff", "--accent-soft": "rgb(255 91 58 / 13%)", "--ok": "#46d39a", "--ok-soft": "rgb(70 211 154 / 12%)" },
+};
+// How much of the tint colour goes into each surface at full strength (light, dark)
+const TINT_MIX = { "--bg": [.2, .2], "--bg-2": [.24, .22], "--surface": [.08, .17], "--surface-2": [.22, .22],
+  "--border": [.28, .28], "--border-strong": [.32, .32] };
 const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
-let theme = { mode: "system", accent: "" };
-try { Object.assign(theme, JSON.parse(localStorage.getItem("anistash-theme") || "{}")); } catch { /* storage blocked */ }
+const reducedQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+const clone = (x) => JSON.parse(JSON.stringify(x));
+let look = clone(DEFAULT_LOOK);
+try { Object.assign(look, JSON.parse(localStorage.getItem("anistash-look") || "{}")); } catch { /* storage blocked */ }
 
 const hexToRgb = (h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
 const rgbToHex = (c) => "#" + c.map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("");
@@ -148,70 +166,216 @@ function contrast(a, b) {
   const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p);
   return (x + 0.05) / (y + 0.05);
 }
-// Any colour stays readable: nudged darker on light pages and lighter on dark ones until text in
-// it stands out from the background (WCAG 3:1, the level for large text and controls)
-function readableAccent(hex, dark) {
-  const bg = dark ? [22, 24, 30] : [255, 253, 249];
+// Any colour stays readable: nudged darker on light pages and lighter on dark ones until it stands
+// out from the surface behind it (WCAG 3:1, the level for large text and controls)
+function readableOn(hex, surface, dark) {
   let c = hexToRgb(hex);
-  for (let i = 0; i < 14 && contrast(c, bg) < 3; i++) c = mixRgb(c, dark ? [255, 255, 255] : [0, 0, 0], 0.12);
+  for (let i = 0; i < 16 && contrast(c, surface) < 3; i++) c = mixRgb(c, dark ? [255, 255, 255] : [0, 0, 0], 0.12);
   return c;
 }
-const isDark = () => theme.mode === "dark" || (theme.mode !== "light" && darkQuery.matches);
+const wantsDark = (l) => l.mode === "dark" || (l.mode !== "light" && darkQuery.matches);
+const reduceMotion = (l) => l.motion.reduce === "always" || (l.motion.reduce !== "never" && reducedQuery.matches);
 
-function applyTheme(next = {}, { fade = false } = {}) {
-  theme = { ...theme, ...next };
+// Every colour a look gives a page in light or dark (used for the page and for the sandbox)
+function lookTokens(l, dark) {
+  const mode = dark ? "dark" : "light";
+  const out = { ...BASE[mode] };
+  const colors = l.palette.colors;
+  if (!colors.length) return out;
+  const tintHex = l.palette.tint >= 0 ? colors[l.palette.tint] : null;
+  if (tintHex) {
+    const tint = hexToRgb(tintHex), strength = l.tint / 100;
+    for (const [name, mix] of Object.entries(TINT_MIX)) {
+      out[name] = rgbToHex(mixRgb(hexToRgb(BASE[mode][name]), tint, mix[dark ? 1 : 0] * strength));
+    }
+    // text stays crisp on the tinted surfaces
+    for (const name of ["--text", "--muted"]) {
+      let c = hexToRgb(BASE[mode][name]);
+      for (let i = 0; i < 10 && contrast(c, hexToRgb(out["--surface-2"])) < (name === "--text" ? 7 : 4.5); i++) {
+        c = mixRgb(c, dark ? [255, 255, 255] : [0, 0, 0], 0.2);
+      }
+      out[name] = rgbToHex(c);
+    }
+  }
+  const c = readableOn(colors[l.palette.accent] || colors[0], hexToRgb(out["--surface"]), dark);
+  out["--accent"] = rgbToHex(c);
+  out["--accent-hover"] = rgbToHex(mixRgb(c, dark ? [255, 255, 255] : [0, 0, 0], 0.14));
+  out["--accent-soft"] = `rgb(${c.map(Math.round).join(" ")} / ${dark ? 14 : 11}%)`;
+  out["--accent-text"] = contrast(c, [255, 255, 255]) >= 3 ? "#fff" : "#16130f";
+  return out;
+}
+
+// Shapes, spacing, fonts and the palette's colours for ambient effects (page and sandbox alike)
+function lookStyle(l) {
+  const colors = l.palette.colors.length ? l.palette.colors : ["#e2401f", "#fcb315", "#4f4086"];
+  return { "--display": FONTS[l.font.heading], "--body": FONTS[l.font.body],
+    "--amb1": colors[0], "--amb2": colors[1] || colors[0], "--amb3": colors[2] || colors[1] || colors[0] };
+}
+const LOOK_DATA = (l) => ({ corners: l.corners, density: l.density, posters: l.posters });
+
+function applyLook(next, { fade = false } = {}) {
+  look = { ...clone(DEFAULT_LOOK), ...clone(next) };
   const root = document.documentElement;
-  if (fade && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  if (fade && !reduceMotion(look)) {
     root.classList.add("theme-fade");
-    clearTimeout(applyTheme.timer);
-    applyTheme.timer = setTimeout(() => root.classList.remove("theme-fade"), 450);
+    clearTimeout(applyLook.timer);
+    applyLook.timer = setTimeout(() => root.classList.remove("theme-fade"), 450);
   }
-  if (theme.mode === "light" || theme.mode === "dark") root.dataset.theme = theme.mode;
+  if (look.mode === "light" || look.mode === "dark") root.dataset.theme = look.mode;
   else delete root.dataset.theme;
-  const dark = isDark();
-  if (theme.accent) {
-    const c = readableAccent(theme.accent, dark);
-    const white = [255, 255, 255];
-    root.style.setProperty("--accent", rgbToHex(c));
-    root.style.setProperty("--accent-hover", rgbToHex(mixRgb(c, dark ? white : [0, 0, 0], 0.14)));
-    root.style.setProperty("--accent-soft", `rgb(${c.map(Math.round).join(" ")} / ${dark ? 14 : 11}%)`);
-    // White text like AniStash's own buttons, unless the colour is too light for it
-    root.style.setProperty("--accent-text", contrast(c, white) >= 3 ? "#fff" : "#16130f");
-  } else {
-    for (const v of ["--accent", "--accent-hover", "--accent-soft", "--accent-text"]) root.style.removeProperty(v);
+  const dark = wantsDark(look);
+  const tokens = lookTokens(look, dark);
+  for (const name of Object.keys(BASE.light)) {
+    if (look.palette.colors.length) root.style.setProperty(name, tokens[name]);
+    else root.style.removeProperty(name);
   }
-  for (const m of document.querySelectorAll('meta[name="theme-color"]')) m.content = dark ? "#0d0e12" : "#f5f2ec";
-  // The browser tab's icon wears the same colour as the logo
-  const css = getComputedStyle(root);
-  const fill = css.getPropertyValue("--accent").trim(), ink = css.getPropertyValue("--accent-text").trim();
-  const favicon = document.getElementById("favicon");
-  if (favicon && fill) {
-    favicon.href = "data:image/svg+xml," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 104">
-      <rect width="104" height="104" rx="26" fill="${fill}"/>
-      <path d="M29 33.5H75.5Q72 45.5 57.5 55M50.5 46Q51.5 66.5 33 79" fill="none" stroke="${ink}" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/></svg>`);
-  }
+  for (const [name, value] of Object.entries(lookStyle(look))) root.style.setProperty(name, value);
+  root.style.fontSize = look.font.size === 100 ? "" : `${look.font.size}%`;
+  Object.assign(root.dataset, LOOK_DATA(look), { glass: look.glass ? "on" : "off", page: look.motion.page,
+    hover: look.motion.hover, ambient: look.motion.ambient });
+  if (look.motion.reduce === "system") delete root.dataset.motion; else root.dataset.motion = look.motion.reduce;
+  for (const m of document.querySelectorAll('meta[name="theme-color"]')) m.content = tokens["--bg"];
+  paintBackground(look);
+  paintAmbient(look);
+  paintBrand(look, tokens);
   const toggle = document.getElementById("theme-toggle");
   if (toggle) {
     toggle.innerHTML = icon(dark ? "sun" : "moon");
     toggle.setAttribute("aria-label", dark ? "Switch to light mode" : "Switch to dark mode");
     toggle.dataset.tip = dark ? "Switch to light mode" : "Switch to dark mode";
   }
-  try { localStorage.setItem("anistash-theme", JSON.stringify(theme)); } catch { /* storage blocked */ }
+  try { localStorage.setItem("anistash-look", JSON.stringify(look)); } catch { /* storage blocked */ }
 }
 
-// Saves a change for this person (and shows it straight away)
-async function saveTheme(next) {
-  applyTheme(next, { fade: true });
+function layer(id) {
+  let el = document.getElementById(id);
+  if (!el) { el = document.createElement("div"); el.id = id; el.setAttribute("aria-hidden", "true"); document.body.prepend(el); }
+  return el;
+}
+
+function paintBackground(l) {
+  const el = layer("bg-layer"), url = l.files?.background;
+  const on = Boolean(l.bg_image.on && url);
+  el.classList.toggle("on", on);
+  el.classList.toggle("tile", l.bg_image.fit === "tile");
+  el.style.backgroundImage = on ? `url(${JSON.stringify(url)})` : "";
+  el.style.filter = on && l.bg_image.blur ? `blur(${l.bg_image.blur}px)` : "";
+  el.style.setProperty("--dim", String(l.bg_image.dim / 100));
+}
+
+function paintAmbient(l) {
+  const el = layer("ambient"), kind = reduceMotion(l) ? "none" : l.motion.ambient;
+  if (el.dataset.kind === kind) return;
+  el.dataset.kind = kind;
+  el.innerHTML = "";
+  if (kind === "drift") el.innerHTML = '<i class="blob"></i><i class="blob"></i><i class="blob"></i>';
+  if (kind === "petals") {
+    const colors = ["var(--amb1)", "var(--amb2)", "var(--amb3)"];
+    el.innerHTML = Array.from({ length: 12 }, (_, i) => `<i class="petal" style="left:${(i * 8.3 + Math.random() * 6).toFixed(1)}%;
+      --c:${colors[i % 3]};--t:${(11 + Math.random() * 9).toFixed(1)}s;--delay:${(-Math.random() * 18).toFixed(1)}s;
+      --sway:${Math.round(20 + Math.random() * 60) * (i % 2 ? 1 : -1)}px;opacity:${(0.35 + Math.random() * 0.4).toFixed(2)}"></i>`).join("");
+  }
+}
+
+// The logo (your own picture, or the seal in your colour), the browser-tab icon and your avatar
+function paintBrand(l, tokens) {
+  const brand = document.querySelector(".brand .logo");
+  const own = l.files?.logo;
+  if (brand) {
+    if (own && brand.tagName !== "IMG") brand.outerHTML = `<img class="logo" src="${esc(own)}" width="30" height="30" alt="">`;
+    else if (own) brand.src = own;
+    else if (brand.tagName === "IMG") brand.outerHTML = '<svg class="logo" width="30" height="30" aria-hidden="true"><use href="#logo"/></svg>';
+  }
+  const favicon = document.getElementById("favicon");
+  if (favicon) {
+    favicon.href = own || "data:image/svg+xml," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 104">
+      <rect width="104" height="104" rx="26" fill="${tokens["--accent"]}"/>
+      <path d="M29 33.5H75.5Q72 45.5 57.5 55M50.5 46Q51.5 66.5 33 79" fill="none" stroke="${tokens["--accent-text"]}" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/></svg>`);
+  }
+  const me = document.getElementById("me-btn");
+  if (me && status?.user) {
+    me.hidden = false;
+    const avatar = l.files?.avatar;
+    me.innerHTML = avatar ? `<img src="${esc(avatar)}" alt="">` : esc(status.user.username.slice(0, 1).toUpperCase());
+    me.setAttribute("aria-label", `Your account (${status.user.username})`);
+  } else if (me) me.hidden = true;
+}
+
+// Saves a look for this person and shows it
+async function saveLook(next, opts = {}) {
+  const files = look.files;
+  applyLook({ ...next, files }, opts);
   if (!status?.user) return;
   try {
-    await api("/api/account/preferences", { method: "PUT", body: { theme_mode: theme.mode, accent: theme.accent } });
-    Object.assign(status.user, { theme_mode: theme.mode, accent: theme.accent });
+    const { look: saved } = await api("/api/account/look", { method: "PUT", body: { look: next } });
+    status.look = saved;
+    applyLook(saved);
   } catch (err) { toast(err.message, true); }
 }
 
-applyTheme();
-darkQuery.addEventListener("change", () => applyTheme({}, { fade: true }));
-document.getElementById("theme-toggle").addEventListener("click", () => saveTheme({ mode: isDark() ? "light" : "dark" }));
+// Light ⇄ dark from the button at the top, with the person's chosen animation
+function toggleMode(button) {
+  const next = { ...look, mode: wantsDark(look) ? "light" : "dark" };
+  const how = reduceMotion(look) ? "instant" : look.motion.toggle;
+  if (how === "fade") return saveLook(next, { fade: true });
+  if (how === "instant") return saveLook(next);
+  const r = button.getBoundingClientRect();
+  const x = r.left + r.width / 2, y = r.top + r.height / 2;
+  const radius = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+  const clip = [`circle(0px at ${x}px ${y}px)`, `circle(${radius}px at ${x}px ${y}px)`];
+  if (document.startViewTransition) {
+    const transition = document.startViewTransition(() => applyLook(next));
+    transition.ready.then(() => document.documentElement.animate({ clipPath: clip },
+      { duration: 650, easing: "cubic-bezier(.65, 0, .35, 1)", pseudoElement: "::view-transition-new(root)" })).catch(() => {});
+    transition.finished.then(() => saveLook(next));
+    return;
+  }
+  // Without view transitions: the new background grows out of the button, then the page switches under it
+  const wipe = document.createElement("div");
+  wipe.className = "theme-wipe";
+  wipe.style.background = lookTokens(next, wantsDark(next))["--bg"];
+  document.body.append(wipe);
+  wipe.animate({ clipPath: clip }, { duration: 600, easing: "cubic-bezier(.65, 0, .35, 1)", fill: "forwards" }).finished.then(() => {
+    saveLook(next);
+    wipe.animate({ opacity: [1, 0] }, { duration: 260, fill: "forwards" }).finished.then(() => wipe.remove());
+  });
+}
+
+// A burst of petals from the Downloads tab when one of your downloads finishes
+function celebrate() {
+  if (!look.motion.celebrate || reduceMotion(look)) return;
+  const from = document.querySelector('[data-nav="downloads"]')?.getBoundingClientRect();
+  if (!from) return;
+  const colors = ["var(--amb1)", "var(--amb2)", "var(--amb3)", "var(--accent)"];
+  for (let i = 0; i < 18; i++) {
+    const p = document.createElement("i");
+    const angle = (Math.PI * 2 * i) / 18 + Math.random() * 0.3, dist = 60 + Math.random() * 90;
+    p.className = "burst";
+    p.style.cssText = `left:${from.left + from.width / 2}px;top:${from.top + from.height / 2}px;--c:${colors[i % 4]};
+      --x:${Math.cos(angle) * dist}px;--y:${Math.sin(angle) * dist - 40}px;--r:${Math.round(Math.random() * 540)}deg`;
+    document.body.append(p);
+    setTimeout(() => p.remove(), 1200);
+  }
+}
+
+// Posters tilt toward the pointer (when that hover style is chosen)
+document.addEventListener("pointermove", (e) => {
+  if (look.motion.hover !== "tilt" || e.pointerType !== "mouse") return;
+  const art = e.target.closest?.(".poster .art");
+  if (!art) return;
+  const r = art.getBoundingClientRect();
+  art.style.setProperty("--ry", `${((e.clientX - r.left) / r.width - 0.5) * 16}deg`);
+  art.style.setProperty("--rx", `${(0.5 - (e.clientY - r.top) / r.height) * 16}deg`);
+}, { passive: true });
+document.addEventListener("visibilitychange", () => document.documentElement.classList.toggle("tab-hidden", document.hidden));
+
+applyLook(look);
+// For checking looks from the browser console (and the tests): pure functions, no state
+window.anistash = Object.freeze({ lookTokens, contrast, hexToRgb, CURATED, DEFAULT_LOOK,
+  paletteFromCombo: (...a) => paletteFromCombo(...a), loadWada: () => loadWada() });
+darkQuery.addEventListener("change", () => applyLook(look, { fade: true }));
+reducedQuery.addEventListener("change", () => applyLook(look));
+document.getElementById("theme-toggle").addEventListener("click", (e) => toggleMode(e.currentTarget));
 
 function skeletonPosters(n) {
   return Array.from({ length: n }, (_, k) => `<div class="poster" style="--i:${k}"><div class="art skel"></div><div class="skel skel-line"></div><div class="skel skel-line" style="width:60%"></div></div>`).join("");
@@ -443,9 +607,19 @@ const TIPS = [
   ['[data-sort="newest"]', "Most recently started first"],
   ['#find', "Look this show up on the anime site to pick seasons and episodes to download"],
   ['#theme-toggle', "Switch between light and dark"],
-  ['[data-theme-mode="system"]', "Follow your device: light by day, dark at night if your device does that"],
-  ['.swatch', "Use this colour for buttons and highlights (only you see it)"],
-  ['#accent-picker', "Pick any colour you like"],
+  ['[data-set="mode"][data-value="system"]', "Follow your device: light by day, dark at night if your device does that"],
+  ['.combo', "Try this combination from Sanzo Wada's book in the sandbox"],
+  ['#book-open', "See all 348 combinations from the book"],
+  ['#shuffle', "Try a random combination from the book"],
+  ['[data-role="accent"]', "Use this colour for buttons and highlights"],
+  ['[data-role="tint"]', "Tint the background with this colour"],
+  ['#look-use', "Keep this look (it follows you to every device)"],
+  ['#look-undo', "Forget the changes and go back to the look you have"],
+  ['#look-export', "Copy a code that recreates your look, to share it"],
+  ['#look-import', "Try a look someone shared with you"],
+  ['#look-reset', "Use the site's default look again"],
+  ['#look-default', "Use your look for everyone who hasn't chosen their own, and the login page"],
+  ['#me-btn', "Your account"],
   ['.sn-back', "Back to the list of settings"],
   ['[data-jf="enable"]', "Let this Jellyfin user sign in to AniStash with the role on the left"],
   ['[data-jf="link"]', "Switch the AniStash account with this name to Jellyfin sign-in (it keeps its data)"],
@@ -731,9 +905,9 @@ async function route() {
     return;
   }
   if (seq !== routeSeq) return;  // a newer navigation started while this one waited
-  if (status.user && (status.user.theme_mode !== theme.mode || status.user.accent !== theme.accent)) {
-    applyTheme({ mode: status.user.theme_mode, accent: status.user.accent }, { fade: true });
-  }
+  // The person's look (or the site default on the login page), if it differs from what's showing
+  if (status.look && JSON.stringify(status.look) !== JSON.stringify(look)) applyLook(status.look, { fade: true });
+  else paintBrand(look, lookTokens(look, wantsDark(look)));
   // Fresh install or unfinished setup always lands in the wizard
   if (!status.has_admin && name !== "setup") return void (location.hash = "#/setup");
   if (status.has_admin && !status.logged_in && name !== "login") return void (location.hash = "#/login");
@@ -774,6 +948,8 @@ async function refreshBadge() {
 }
 
 function setBadge(counts) {
+  if (setBadge.done !== undefined && counts.done > setBadge.done) celebrate();
+  setBadge.done = counts.done;
   const active = counts.queued + counts.running;
   const badge = document.getElementById("queue-badge");
   badge.hidden = active === 0;
@@ -2529,66 +2705,364 @@ function accountSection() {
     </div>`;
 }
 
+// Settings → Appearance: try a look in the sandbox, then use it -------------------------------------
+
+let wada = null;
+async function loadWada() {
+  wada ||= fetch("/static/wada.json").then((r) => r.json());
+  return wada;
+}
+// How well a colour works for buttons: colourful (chroma) and neither pale nor near-black
+function vivid(hex) {
+  const [r, g, b] = hexToRgb(hex).map((v) => v / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2;
+  return (max - min) * Math.max(0, 1 - Math.abs(l - 0.45) * 1.4);
+}
+// A combination from the book: the most vivid colour leads, the next one tints the background
+function paletteFromCombo(book, n) {
+  const colors = book.combos[n].map((i) => book.colors[i][1]);
+  const order = colors.map((c, i) => [vivid(c), i]).sort((a, b) => b[0] - a[0]).map(([, i]) => i);
+  return { combo: Number(n), colors, accent: order[0], tint: order[1] ?? -1 };
+}
+const comboNames = (book, n) => book.combos[n].map((i) => book.colors[i][0]);
+const stripe = (colors) => `<span class="stripe">${colors.map((c) => `<i style="background:${c}"></i>`).join("")}</span>`;
+const getPath = (o, path) => path.split(".").reduce((x, k) => x?.[k], o);
+function setPath(o, path, value) {
+  const keys = path.split("."), last = keys.pop();
+  keys.reduce((x, k) => x[k], o)[last] = value;
+}
+const seg = (path, options) => `<div class="segmented" role="group">${options.map(([v, label]) =>
+  `<button type="button" data-set="${path}" data-value="${v}">${label}</button>`).join("")}</div>`;
+const range = (path, min, max, label, unit = "") => `<label class="field range"><span>${label} <b data-show="${path}"></b>${unit}</span>
+  <input type="range" min="${min}" max="${max}" data-set="${path}" data-num></label>`;
+const toggleBox = (path, label) => `<label class="check"><input type="checkbox" data-set="${path}" data-bool> ${label}</label>`;
+
+function sandboxFrame(mode) {
+  return `<div class="sandbox" data-sb="${mode}">
+    <div class="sb-bg"></div>
+    <div class="sb-top"><span class="sb-logo"></span><b class="sb-brand">anistash</b>
+      <span class="sb-nav"><i class="on">Browse</i><i>Discover</i><i>Downloads</i></span></div>
+    <div class="sb-body">
+      <h3>Best this season</h3>
+      <div class="sb-posters">${[0, 1, 2, 3].map((i) => `<span class="sb-poster" data-i="${i}"><b>${i + 1}</b></span>`).join("")}</div>
+      <div class="row" style="gap:.4rem"><span class="chip on">Fantasy</span><span class="chip">Drama</span><span class="pill accent">Downloading</span></div>
+      <div class="card sb-card"><b>Frieren · S01</b><div class="muted small">6 of 12 episodes · Sub + Dub</div>
+        <div class="progress live" style="margin-top:.45rem"><i style="width:55%"></i></div></div>
+      <div class="row" style="gap:.4rem"><span class="btn primary small">${icon("download")}Download</span><span class="btn small">${icon("star")}Follow</span></div>
+      <p class="muted small" style="margin:.4rem 0 0">Text on your background, and <a>a link</a>.</p>
+    </div>
+  </div>`;
+}
+
 function appearanceSection() {
-  const custom = theme.accent && !ACCENTS.some(([hex]) => hex === theme.accent);
   return `
-    <div class="card" id="appearance">
-      <p class="muted small" style="margin-top:0">Only you see these. They follow you to every device you sign in on.</p>
-      <h3 style="margin-top:.6rem">Light or dark</h3>
-      <div class="segmented" role="group" aria-label="Light or dark">
-        ${[["system", "Match device"], ["light", "Light"], ["dark", "Dark"]].map(([k, v]) =>
-          `<button type="button" data-theme-mode="${k}" class="${theme.mode === k ? "on" : ""}">${v}</button>`).join("")}
+  <div class="look-editor" id="appearance">
+    <div class="card sandbox-card">
+      <div class="section-head" style="margin:0 0 .6rem"><h2 style="margin:0">Sandbox</h2>
+        <span class="muted small">Try things here first. Nothing changes until you press <b>Use this look</b>.</span></div>
+      <div class="sandboxes">${sandboxFrame("light")}${sandboxFrame("dark")}</div>
+      <div class="draft-bar" id="draft-bar" hidden><span class="grow">You've changed things you haven't used yet.</span>
+        <button type="button" class="small ghost" id="look-undo">Undo</button>
+        <button type="button" class="small primary" id="look-use">${icon("check")}Use this look</button></div>
+    </div>
+
+    <div class="card"><h2>Light or dark</h2>
+      ${seg("mode", [["system", "Match device"], ["light", "Light"], ["dark", "Dark"]])}
+      <h3>When you switch</h3>
+      ${seg("motion.toggle", [["circle", "Circle from the button"], ["fade", "Fade"], ["instant", "Instant"]])}
+      <p class="hint">How the page changes when you press ${icon("moon")} at the top.</p></div>
+
+    <div class="card"><h2>Colours</h2>
+      <p class="muted small">From Sanzo Wada's <i>A Dictionary of Color Combinations</i> (1933). Each combination colours the buttons
+        <i>and</i> the background.</p>
+      <div class="combos" id="curated">${loading()}</div>
+      <div class="row" style="margin:.7rem 0"><button type="button" class="small" id="book-open">${icon("browse")}Browse the whole book</button>
+        <button type="button" class="small" id="shuffle">${icon("dice")}Surprise me</button>
+        <button type="button" class="small ghost" id="brand-colours">AniStash's own colours</button></div>
+      <div id="roles"></div>
+      ${range("tint", 0, 100, "Background colour strength", "%")}
+      <h3>Your own colours</h3>
+      <div class="row own-colours">
+        <label class="color-pick"><input type="color" id="own-accent"><span>Buttons &amp; highlights</span></label>
+        <label class="color-pick"><input type="color" id="own-tint"><span>Background</span></label>
       </div>
-      <p class="hint">The ${icon("moon")} button at the top switches too.</p>
-      <h3>Colour</h3>
-      <div class="swatches" role="group" aria-label="Accent colour">
-        ${ACCENTS.map(([hex, name, combo, partners]) => `<button type="button" class="swatch ${theme.accent === hex ? "on" : ""}" data-accent="${hex}"
-            style="--sw:${hex || "#dd4027"}" aria-pressed="${theme.accent === hex}"
-            data-tip="${esc(`${name}${hex ? "" : " (AniStash's own colour)"}. In combination No. ${combo} it's paired with ${partners.map((x) => x[1]).join(" and ")}`)}">
-            <span>${partners.map(([c]) => `<i style="background:${c}"></i>`).join("")}</span><b>${name}</b></button>`).join("")}
-        <label class="swatch custom ${custom ? "on" : ""}" style="--sw:${custom ? theme.accent : "#888"}">
-          <span>${icon("plus")}</span><b>Your own</b>
-          <input type="color" id="accent-picker" value="${custom ? theme.accent : "#e2401f"}" aria-label="Pick any colour"></label>
+      <p class="hint">Very light or dark colours are adjusted a little so text stays readable.</p></div>
+
+    <div class="card"><h2>Background picture</h2>
+      <div class="uploads">${uploadTile("background", "Background", "Up to 8 MB")}</div>
+      ${toggleBox("bg_image.on", "Show my background picture")}
+      ${range("bg_image.dim", 0, 90, "Dim", "%")}${range("bg_image.blur", 0, 24, "Blur", "px")}
+      ${seg("bg_image.fit", [["cover", "Fill the screen"], ["tile", "Tile"]])}</div>
+
+    <div class="card"><h2>Logo &amp; avatar</h2>
+      <div class="uploads">${uploadTile("logo", "Logo", "Top left and browser tab · up to 1 MB")}${uploadTile("avatar", "Avatar", "Top right · up to 1 MB")}</div>
+      <p class="hint">PNG, JPEG, WebP or GIF. Only you see them (unless an admin makes their look the default).</p></div>
+
+    <div class="card"><h2>Text &amp; shapes</h2>
+      <div class="grid2">
+        <label class="field"><span>Headings</span><select data-set="font.heading">${Object.keys(FONTS).map((f) =>
+          `<option value="${f}" style="font-family:${esc(FONTS[f])}">${FONT_NAMES[f]}</option>`).join("")}</select></label>
+        <label class="field"><span>Text</span><select data-set="font.body">${Object.keys(FONTS).map((f) =>
+          `<option value="${f}" style="font-family:${esc(FONTS[f])}">${FONT_NAMES[f]}</option>`).join("")}</select></label>
       </div>
-      <p class="hint">The colours come from Sanzo Wada's <i>A Dictionary of Color Combinations</i> (1933); the small dots show what he paired each
-        one with. Very light or very dark colours are adjusted a little so text stays readable.</p>
-      <div class="theme-preview" aria-hidden="true">
-        <span class="btn primary small">${icon("download")}Download</span>
-        <span class="chip on">Fantasy</span><span class="chip">Drama</span>
-        <span class="pill accent">Downloading</span>
-        <div class="progress" style="flex:1 1 120px"><i style="width:62%"></i></div>
-      </div>
-      <h3>Show titles in</h3>
+      ${range("font.size", 90, 125, "Text size", "%")}
+      <h3>Corners</h3>${seg("corners", [["sharp", "Sharp"], ["soft", "Soft"], ["round", "Round"]])}
+      <h3>Spacing</h3>${seg("density", [["comfortable", "Comfortable"], ["compact", "Compact"]])}
+      <h3>Posters</h3>${seg("posters", [["s", "Small"], ["m", "Medium"], ["l", "Large"]])}
+      ${toggleBox("glass", "Frosted glass on bars and windows")}</div>
+
+    <div class="card"><h2>Motion</h2>
+      <h3>Changing pages</h3>${seg("motion.page", [["slide", "Slide up"], ["fade", "Fade"], ["zoom", "Zoom"], ["none", "None"]])}
+      <h3>Hovering a poster</h3>${seg("motion.hover", [["lift", "Lift"], ["tilt", "Tilt"], ["glow", "Glow"], ["none", "None"]])}
+      <h3>Behind the page</h3>${seg("motion.ambient", [["grain", "Paper grain"], ["drift", "Drifting colour"], ["petals", "Falling petals"], ["none", "Nothing"]])}
+      ${toggleBox("motion.celebrate", "Burst of petals when a download finishes")}
+      <h3>Reduce motion</h3>${seg("motion.reduce", [["system", "Like my device"], ["always", "Always"], ["never", "Never"]])}
+      <p class="hint">Reduced motion turns all of the above off.</p></div>
+
+    <div class="card"><h2>Show titles in</h2>
       <div class="segmented" role="group" aria-label="Title language">
         <button type="button" data-setlang="en" class="${titleLang() === "en" ? "on" : ""}">English</button>
         <button type="button" data-setlang="ja" class="${titleLang() === "ja" ? "on" : ""}">Japanese (romaji)</button>
       </div>
-      <p class="hint">Search finds shows by either name, whichever you pick.</p>
-    </div>`;
+      <p class="hint">Search finds shows by either name, whichever you pick.</p></div>
+
+    <div class="card"><h2>Share &amp; reset</h2>
+      <div class="row"><button type="button" class="small" id="look-export">Copy my look as a code</button>
+        <button type="button" class="small" id="look-import">Paste a look code</button>
+        <button type="button" class="small ghost" id="look-reset">Go back to the default look</button>
+        ${can.admin() ? `<button type="button" class="small" id="look-default">Make my look everyone's default</button>` : ""}</div>
+      <p class="hint" id="look-source"></p></div>
+  </div>`;
 }
 
-function bindAppearance() {
+const FONT_NAMES = { bricolage: "Bricolage Grotesque", onest: "Onest", system: "Your device's font", serif: "Serif",
+  rounded: "Rounded", mono: "Monospace" };
+
+function uploadTile(kind, label, hint) {
+  return `<div class="upload" data-upload-tile="${kind}">
+    <div class="upload-preview" data-preview="${kind}"></div>
+    <div class="grow"><b>${label}</b><div class="muted small">${hint}</div>
+      <div class="row" style="margin-top:.4rem;gap:.4rem">
+        <label class="btn small">${icon("plus")}Choose…<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" data-upload="${kind}" hidden></label>
+        <button type="button" class="small ghost" data-remove="${kind}" hidden>Remove</button></div></div>
+  </div>`;
+}
+
+async function bindAppearance() {
   const pane = $("#appearance");
-  const mark = () => {
-    for (const b of $$("[data-theme-mode]", pane)) b.classList.toggle("on", b.dataset.themeMode === theme.mode);
-    const custom = theme.accent && !ACCENTS.some(([hex]) => hex === theme.accent);
-    for (const b of $$("[data-accent]", pane)) {
-      b.classList.toggle("on", b.dataset.accent === theme.accent);
-      b.setAttribute("aria-pressed", b.dataset.accent === theme.accent);
-    }
-    const own = $(".swatch.custom", pane);
-    own.classList.toggle("on", Boolean(custom));
-    if (custom) own.style.setProperty("--sw", theme.accent);
+  const fresh = await api("/api/account/look");
+  let saved = clone(fresh.look);
+  let draft = clone(saved);
+  const myFiles = { ...fresh.my_files };
+  if (!saved.own) draft.files = { ...myFiles, avatar: saved.files.avatar };  // editing makes it your own look
+  const book = await loadWada();
+
+  const same = () => {
+    const strip = (l) => JSON.stringify({ ...l, files: undefined, own: undefined });
+    return strip(draft) === strip(saved);
   };
+  function paintSandbox() {
+    for (const frame of $$(".sandbox", pane)) {
+      const dark = frame.dataset.sb === "dark";
+      const tokens = lookTokens(draft, dark);
+      for (const [k, v] of Object.entries({ ...tokens, ...lookStyle(draft) })) frame.style.setProperty(k, v);
+      Object.assign(frame.dataset, LOOK_DATA(draft));
+      const bg = frame.querySelector(".sb-bg"), url = draft.files?.background;
+      const on = draft.bg_image.on && url;
+      bg.style.backgroundImage = on ? `url(${JSON.stringify(url)})` : "";
+      bg.style.filter = on && draft.bg_image.blur ? `blur(${Math.round(draft.bg_image.blur / 2)}px)` : "";
+      bg.style.backgroundSize = draft.bg_image.fit === "tile" ? "120px auto" : "cover";
+      bg.style.backgroundRepeat = draft.bg_image.fit === "tile" ? "repeat" : "no-repeat";
+      bg.style.setProperty("--dim", String(draft.bg_image.dim / 100));
+      bg.classList.toggle("on", Boolean(on));
+      frame.querySelector(".sb-logo").innerHTML = draft.files?.logo
+        ? `<img src="${esc(draft.files.logo)}" alt="">` : '<svg aria-hidden="true"><use href="#logo"/></svg>';
+    }
+  }
+  function paintControls() {
+    for (const el of $$("[data-set]", pane)) {
+      const value = getPath(draft, el.dataset.set);
+      if (el.matches("button")) el.classList.toggle("on", String(value) === el.dataset.value);
+      else if (el.type === "checkbox") el.checked = Boolean(value);
+      else el.value = value;
+    }
+    for (const el of $$("[data-show]", pane)) el.textContent = getPath(draft, el.dataset.show);
+    for (const b of $$("[data-combo]", pane)) b.classList.toggle("on", Number(b.dataset.combo) === draft.palette.combo);
+    const p = draft.palette;
+    $("#roles", pane).innerHTML = p.colors.length ? `
+      <div class="roles"><span class="muted small">Buttons &amp; highlights</span>${p.colors.map((c, i) =>
+        `<button type="button" class="dot ${p.accent === i ? "on" : ""}" style="--sw:${c}" data-role="accent" data-i="${i}" aria-label="Use ${c} for buttons"></button>`).join("")}</div>
+      <div class="roles"><span class="muted small">Background</span>
+        <button type="button" class="dot none ${p.tint === -1 ? "on" : ""}" data-role="tint" data-i="-1" aria-label="No background colour">${icon("x")}</button>${p.colors.map((c, i) =>
+        `<button type="button" class="dot ${p.tint === i ? "on" : ""}" style="--sw:${c}" data-role="tint" data-i="${i}" aria-label="Tint the background with ${c}"></button>`).join("")}</div>
+      ${p.combo ? `<p class="hint" style="margin-top:.2rem">Combination No. ${p.combo}: ${esc(comboNames(book, p.combo).join(" · "))}</p>` : ""}`
+      : `<p class="hint">AniStash's own colours (Wada's Red Orange).</p>`;
+    $("#own-accent", pane).value = p.colors[p.accent] || "#e2401f";
+    $("#own-tint", pane).value = p.tint >= 0 ? p.colors[p.tint] : "#f5f2ec";
+    for (const kind of ["background", "logo", "avatar"]) {
+      const url = draft.files?.[kind];
+      $(`[data-preview="${kind}"]`, pane).innerHTML = url ? `<img src="${esc(url)}" alt="">` : icon(kind === "avatar" ? "user" : "plus");
+      $(`[data-remove="${kind}"]`, pane).hidden = !myFiles[kind];
+    }
+    $("#draft-bar", pane).hidden = same();
+    $("#look-source", pane).textContent = saved.own ? "You're using your own look."
+      : "You're using the site's default look. Anything you use here becomes your own.";
+  }
+  const refresh = () => { paintSandbox(); paintControls(); };
+  const change = (fn) => { fn(); refresh(); };
+
+  $("#curated", pane).innerHTML = CURATED.map((n) => {
+    const colors = book.combos[n].map((i) => book.colors[i][1]);
+    return `<button type="button" class="combo" data-combo="${n}" data-tip="${esc(`No. ${n}: ${comboNames(book, n).join(", ")}`)}">${stripe(colors)}<small>No. ${n}</small></button>`;
+  }).join("");
+
   pane.addEventListener("click", (e) => {
-    const mode = e.target.closest("[data-theme-mode]"), sw = e.target.closest("[data-accent]");
-    if (mode) saveTheme({ mode: mode.dataset.themeMode }).then(mark);
-    else if (sw) saveTheme({ accent: sw.dataset.accent }).then(mark);
+    const t = e.target.closest("button, [data-combo]");
+    if (!t || !pane.contains(t)) return;
+    if (t.dataset.set && t.dataset.value !== undefined) return change(() => setPath(draft, t.dataset.set, t.dataset.value));
+    if (t.dataset.combo) return change(() => { draft.palette = paletteFromCombo(book, t.dataset.combo); });
+    if (t.dataset.role) return change(() => { draft.palette[t.dataset.role] = Number(t.dataset.i); });
+    if (t.dataset.setlang) return setTitleLang(t.dataset.setlang);
+    if (t.dataset.remove) return removeUpload(t.dataset.remove);
+    switch (t.id) {
+      case "shuffle": return change(() => {
+        const keys = Object.keys(book.combos);
+        draft.palette = paletteFromCombo(book, keys[Math.floor(Math.random() * keys.length)]);
+      });
+      case "brand-colours": return change(() => { draft.palette = clone(DEFAULT_LOOK.palette); });
+      case "book-open": return openBook();
+      case "look-undo": return change(() => { draft = { ...clone(saved), files: draft.files }; });
+      case "look-use": return useDraft(t);
+      case "look-export": return exportLook();
+      case "look-import": return importLook();
+      case "look-reset": return resetLook(t);
+      case "look-default": return makeDefault(t);
+    }
   });
-  const picker = $("#accent-picker", pane);
-  picker.addEventListener("input", () => { applyTheme({ accent: picker.value }); mark(); });  // live while dragging
-  picker.addEventListener("change", () => saveTheme({ accent: picker.value.toLowerCase() }).then(mark));
-  for (const b of $$("[data-setlang]", pane)) b.addEventListener("click", () => setTitleLang(b.dataset.setlang));
+  pane.addEventListener("input", (e) => {
+    const el = e.target;
+    if (el.id === "own-accent" || el.id === "own-tint") {
+      return change(() => {
+        const accent = $("#own-accent", pane).value, tint = $("#own-tint", pane).value;
+        draft.palette = { combo: null, colors: [accent, tint], accent: 0, tint: 1 };
+      });
+    }
+    if (!el.dataset.set || el.matches("button")) return;
+    change(() => setPath(draft, el.dataset.set, el.dataset.num !== undefined ? Number(el.value)
+      : el.dataset.bool !== undefined ? el.checked : el.value));
+  });
+  pane.addEventListener("change", async (e) => {
+    const input = e.target.closest("[data-upload]");
+    if (!input?.files?.[0]) return;
+    const kind = input.dataset.upload, file = input.files[0];
+    try {
+      const resp = await fetch(`/api/account/files/${kind}`, { method: "PUT", body: file, credentials: "same-origin",
+        headers: { "X-Requested-With": "anistash", "Content-Type": file.type || "application/octet-stream" } });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.detail || "Couldn't upload that picture.");
+      Object.assign(myFiles, data.files);
+      draft.files = { ...draft.files, [kind]: data.files[kind] };
+      if (kind === "background") draft.bg_image.on = true;
+      if (kind !== "background") applyLook({ ...look, files: { ...look.files, [kind]: data.files[kind] } });  // logo & avatar show straight away
+      toast("Uploaded");
+      refresh();
+    } catch (err) { toast(err.message, true); }
+    input.value = "";
+  });
+  for (const area of $$("[data-upload-tile]", pane)) {
+    area.addEventListener("dragover", (e) => { e.preventDefault(); area.classList.add("over"); });
+    area.addEventListener("dragleave", () => area.classList.remove("over"));
+    area.addEventListener("drop", (e) => {
+      e.preventDefault();
+      area.classList.remove("over");
+      const input = area.querySelector("[data-upload]");
+      if (e.dataTransfer.files.length) { input.files = e.dataTransfer.files; input.dispatchEvent(new Event("change", { bubbles: true })); }
+    });
+  }
+
+  async function removeUpload(kind) {
+    try {
+      const { files } = await api(`/api/account/files/${kind}`, { method: "DELETE" });
+      Object.assign(myFiles, files);
+      draft.files = { ...draft.files, [kind]: "" };
+      if (kind === "background") draft.bg_image.on = false;
+      applyLook({ ...look, files: { ...look.files, [kind]: "" } });
+      refresh();
+    } catch (err) { toast(err.message, true); }
+  }
+  async function useDraft(button) {
+    try {
+      const { look: result } = await busy(button, () => api("/api/account/look", { method: "PUT", body: { look: draft } }));
+      status.look = result;
+      saved = clone(result);
+      draft = clone(result);
+      applyLook(result, { fade: true });
+      toast("Your new look is on");
+      refresh();
+    } catch (err) { toast(err.message, true); }
+  }
+  async function resetLook(button) {
+    if (!confirm("Go back to the site's default look? Your pictures are kept in case you come back.")) return;
+    const { look: result } = await busy(button, () => api("/api/account/look", { method: "DELETE" }));
+    status.look = result;
+    saved = clone(result);
+    draft = { ...clone(result), files: { ...myFiles, avatar: result.files.avatar } };
+    applyLook(result, { fade: true });
+    refresh();
+  }
+  async function makeDefault(button) {
+    if (!same()) return toast("Press Use this look first, then make it the default.", true);
+    if (!confirm("Make your look the default for everyone who hasn't chosen their own, and for the login page? Your background and logo go with it.")) return;
+    try {
+      await busy(button, () => api("/api/look/default", { method: "PUT", body: { look: saved } }));
+      toast("Your look is now everyone's default");
+    } catch (err) { toast(err.message, true); }
+  }
+  function exportLook() {
+    const { files, own, ...rest } = draft;
+    const code = btoa(unescape(encodeURIComponent(JSON.stringify(rest)))).replace(/=+$/, "");
+    navigator.clipboard?.writeText(code).then(() => toast("Look copied. Send the code to a friend"), () => prompt("Your look code:", code));
+    if (!navigator.clipboard) prompt("Your look code:", code);
+  }
+  function importLook() {
+    const code = prompt("Paste a look code:");
+    if (!code) return;
+    try {
+      const parsed = JSON.parse(decodeURIComponent(escape(atob(code.trim()))));
+      change(() => { draft = { ...clone(DEFAULT_LOOK), ...parsed, files: draft.files }; });
+      toast("Look loaded into the sandbox. Press Use this look to keep it");
+    } catch { toast("That code doesn't look right.", true); }
+  }
+  async function openBook() {
+    const backdrop = sheet(`<h2>A Dictionary of Color Combinations</h2>
+      <p class="muted small">All 348 of Sanzo Wada's combinations. Pick one to try it in the sandbox.</p>
+      <div class="row" style="margin-bottom:.6rem">${`<div class="segmented" role="group" id="book-size">${[["", "All"], ["2", "2 colours"], ["3", "3"], ["4", "4"]]
+        .map(([v, l]) => `<button type="button" data-size="${v}" class="${v ? "" : "on"}">${l}</button>`).join("")}</div>`}
+        <input type="search" id="book-find" placeholder="Find a colour, e.g. Cossack Green" style="flex:1;min-width:180px"></div>
+      <div class="combos book" id="book-grid"></div>`);
+    const grid = backdrop.querySelector("#book-grid");
+    let size = "", find = "";
+    const draw = () => {
+      grid.innerHTML = Object.keys(book.combos).filter((n) => {
+        const names = comboNames(book, n).join(" ").toLowerCase();
+        return (!size || book.combos[n].length === Number(size)) && (!find || names.includes(find));
+      }).map((n) => `<button type="button" class="combo" data-pick="${n}" title="${esc(comboNames(book, n).join(", "))}">${stripe(book.combos[n].map((i) => book.colors[i][1]))}<small>No. ${n}</small></button>`).join("")
+        || `<p class="muted">No combination has that colour.</p>`;
+    };
+    draw();
+    backdrop.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-size]"), pick = e.target.closest("[data-pick]");
+      if (b) { size = b.dataset.size; for (const x of backdrop.querySelectorAll("[data-size]")) x.classList.toggle("on", x === b); draw(); }
+      if (pick) { change(() => { draft.palette = paletteFromCombo(book, pick.dataset.pick); }); backdrop.remove(); }
+    });
+    backdrop.querySelector("#book-find").addEventListener("input", (e) => { find = e.target.value.trim().toLowerCase(); draw(); });
+  }
+
+  // Real posters in the sandbox when Browse has loaded them
+  browseList("/api/browse/trending").then(({ items }) => {
+    $$(".sb-poster", pane).forEach((el, i) => { if (items[i]?.cover) el.style.backgroundImage = `url(${JSON.stringify(items[i].cover)})`; });
+  }).catch(() => {});
+  refresh();
 }
 
 function helpSection() {
@@ -2956,7 +3430,7 @@ const SETTINGS_RENDER = {
 
   appearance(el) {
     el.innerHTML = appearanceSection();
-    bindAppearance();
+    return bindAppearance();
   },
 
   async downloads(el) {

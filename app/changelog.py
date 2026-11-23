@@ -5,6 +5,22 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "1.4.0",
+        "title": "Make it yours",
+        "items": [
+            "Settings → Appearance has a sandbox: try colours, pictures and styles in light and dark before you use "
+            "them.",
+            "Colours now come from all 348 combinations in Sanzo Wada's book, and they colour the background too, "
+            "not just the buttons. Pick which colour does what, or use any colours you like.",
+            "Upload your own background picture, logo and avatar, and choose fonts, text size, corners, spacing and "
+            "poster size.",
+            "Pick how light/dark switches: a circle growing from the button, a fade, or instant. There are new "
+            "animations too: page transitions, tilting posters, drifting colour or falling petals, and a burst of "
+            "petals when a download finishes.",
+            "Share your look as a code. Admins can make theirs everyone's default, login page included.",
+        ],
+    },
+    {
         "version": "1.3.0",
         "title": "Sign in with Jellyfin",
         "items": [

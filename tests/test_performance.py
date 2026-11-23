@@ -87,13 +87,13 @@ def test_queue_poll_answers_unchanged_and_badge_counts(isolated):
         db.execute("UPDATE items SET status = 'failed'")  # keep the worker from picking them up
         db.execute("UPDATE items SET status = 'queued' WHERE episode = '1'")
         first = c.get("/api/queue").json()
-        assert first["counts"] == {"queued": 1, "running": 0} and len(first["batches"]) == 1
+        assert first["counts"] == {"queued": 1, "running": 0, "done": 0} and len(first["batches"]) == 1
         again = c.get("/api/queue", params={"since": first["rev"]}).json()
         assert again == {"rev": first["rev"], "unchanged": True}
         db.execute("UPDATE items SET status = 'failed'")
         changed = c.get("/api/queue", params={"since": first["rev"]}).json()
-        assert "batches" in changed and changed["counts"] == {"queued": 0, "running": 0}
-        assert c.get("/api/queue/summary").json() == {"queued": 0, "running": 0}
+        assert "batches" in changed and changed["counts"] == {"queued": 0, "running": 0, "done": 0}
+        assert c.get("/api/queue/summary").json() == {"queued": 0, "running": 0, "done": 0}
 
 
 def test_finished_history_is_capped(isolated, monkeypatch):

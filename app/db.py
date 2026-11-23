@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS users (
     accent               TEXT NOT NULL DEFAULT '',       -- '#rrggbb' accent colour; '' = AniStash vermilion
     auth_source          TEXT NOT NULL DEFAULT 'local',  -- 'local' (AniStash password) or 'jellyfin' (Jellyfin sign-in)
     external_id          TEXT NOT NULL DEFAULT '',       -- the Jellyfin user Id for Jellyfin sign-in
-    avatar_tag           TEXT NOT NULL DEFAULT ''        -- Jellyfin's picture version, '' = none
+    avatar_tag           TEXT NOT NULL DEFAULT '',       -- Jellyfin's picture version, '' = none
+    look                 TEXT NOT NULL DEFAULT ''        -- their look as JSON (app/look.py); '' = the site default
 );
 
 -- Jellyfin users who signed in correctly but haven't been given access yet
@@ -244,6 +245,7 @@ MIGRATIONS = [
     ("users", "auth_source", "TEXT NOT NULL DEFAULT 'local'"),
     ("users", "external_id", "TEXT NOT NULL DEFAULT ''"),
     ("users", "avatar_tag", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "look", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 

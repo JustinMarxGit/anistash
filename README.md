@@ -24,9 +24,9 @@ It runs in its own Proxmox LXC, created with one command, and works on phones as
 | --- | --- | --- |
 | ![Discover](docs/screenshots/discover.jpg) | ![Anime page](docs/screenshots/anime-page.jpg) | ![Show page](docs/screenshots/show-page.jpg) |
 
-| Downloads | Settings: your own colours | Settings on a phone |
+| Downloads | Make it yours: the sandbox | Settings on a phone |
 | --- | --- | --- |
-| ![Downloads](docs/screenshots/downloads.jpg) | ![Appearance settings](docs/screenshots/settings-desktop.jpg) | ![Settings on a phone](docs/screenshots/settings-phone.jpg) |
+| ![Downloads](docs/screenshots/downloads.jpg) | ![Appearance: the sandbox](docs/screenshots/settings-desktop.jpg) | ![Settings on a phone](docs/screenshots/settings-phone.jpg) |
 
 **Contents:** [Features](#features) · [Requirements](#requirements) · [Install](#install) · [Setup](#setup) ·
 [Discover](#discover) · [Recommendations](#recommendations) · [Following shows](#following-shows) ·
@@ -59,9 +59,17 @@ It runs in its own Proxmox LXC, created with one command, and works on phones as
 - **Multi-user:** admin, member and viewer roles, with careful security (see below). Jellyfin users can sign
   in with their Jellyfin account once an admin enables them.
 - **Updates from the web page:** one click (or automatically), with live progress and automatic rollback.
-- **Your look:** a light/dark switch at the top, and under Settings → Appearance colour schemes drawn from Sanzo
-  Wada's *A Dictionary of Color Combinations* (1933), or any colour you like. Each person's choice is their own and
-  follows them to every device; the logo takes on the colour too.
+- **Make it yours (every person their own):**
+  - **Colours from the book:** colour combinations from Sanzo Wada's *A Dictionary of Color Combinations* (1933), all
+    348 of them, or any colours you like. They colour the buttons *and* the background.
+  - **Pictures:** your own background picture (dimmed and blurred to taste), logo and avatar.
+  - **Text and shapes:** fonts, text size, corner roundness, spacing and poster size.
+  - **Motion:** animations for changing pages, hovering posters (lift, 3D tilt, glow) and switching light/dark (a
+    circle from the button, a fade, or instant), plus drifting colour or falling petals behind the page and a burst
+    of petals when a download finishes.
+  - **Try before you use it:** a sandbox shows your look in light and dark before you keep it.
+  - **Share it:** looks can be shared as a code. Admins can make theirs the default for everyone, including the
+    login page.
 - **Settings that are easy to find:** grouped into sections (Updates, Appearance, Downloads, Storage, Media server,
   Users…), a sidebar on desktop and a simple list on phones.
 - **Explains itself:** every button has a plain-language tooltip, and new users get a short guided tour.
@@ -157,6 +165,36 @@ Browse opens with two lists of shows that are airing now.
 Every site is optional. If one is down, the others still rank the shows, and the page says which one is missing. Scores are cached for 6 hours and hianime's lists for 1 hour, and the ranking is rebuilt in the background, so Browse doesn't wait for the sites.
 
 **MyAnimeList Client ID (optional, admins):** MAL's official API needs a free Client ID. Create one at myanimelist.net → *Account settings → API → Create ID* (App type: *other*) and paste it under **Settings → Ratings**. It's stored encrypted. Without one, AniStash uses Jikan, a public MAL mirror, whenever it's reachable.
+
+## Make it yours
+
+Everything under **Settings → Appearance** is per person, and follows you to every device you sign in on.
+
+- **Sandbox:** a small copy of AniStash in light and dark shows your changes as you make them. Nothing changes for
+  real until you press **Use this look**, and **Undo** forgets the changes.
+- **Colours:** pick one of the curated combinations from Sanzo Wada's *A Dictionary of Color Combinations*, browse
+  the whole book (348 combinations, filtered by number of colours or searched by colour name), or press *Surprise
+  me*.
+  - **Roles:** for the chosen combination, pick which colour is for buttons and which tints the background, and how
+    strongly.
+  - **Your own colours:** any colours you like.
+  - **Readability:** text is kept readable automatically (WCAG contrast).
+- **Pictures:** upload a background picture (dim, blur, fill or tile), your own logo (top left and the browser tab)
+  and an avatar (top right).
+  - Only PNG, JPEG, WebP or GIF are accepted, up to 8 MB for a background and 1 MB for a logo or avatar.
+  - They're checked by their contents and stored only on your AniStash.
+- **Text and shapes:** heading and text fonts, text size, sharp/soft/round corners, comfortable or compact spacing,
+  poster size, and frosted glass on or off.
+- **Motion:**
+  - **Switching light/dark:** a circle growing from the button, a fade, or instant.
+  - **Changing pages:** slide, fade, zoom or none.
+  - **Hovering a poster:** lift, tilt or glow.
+  - **Behind the page:** paper grain, drifting colour or falling petals.
+  - **Finished downloads:** a petal burst.
+  - **Reduce motion:** follows your device, or you can set it to always or never. When on, it turns all of the
+    above off.
+- **Share & reset:** copy your look as a code for friends, paste someone else's, or go back to the default. Admins
+  can make their look (with its pictures) everyone's default, which also styles the login page.
 
 ## Following shows
 
@@ -347,4 +385,5 @@ AniStash is free and open source software under the **[GNU General Public Licens
 study, share and change it, for free; versions you share must stay under the same license. The bundled fonts
 (Bricolage Grotesque, Onest) are under the SIL Open Font License (see `app/static/fonts/`). The colour presets are
 taken from Sanzo Wada's *A Dictionary of Color Combinations* (Haishoku Sōkan), using the colour values digitised by
-[mattdesl/dictionary-of-colour-combinations](https://github.com/mattdesl/dictionary-of-colour-combinations).
+[mattdesl/dictionary-of-colour-combinations](https://github.com/mattdesl/dictionary-of-colour-combinations) (MIT, see
+`app/static/wada-LICENSE.txt`).

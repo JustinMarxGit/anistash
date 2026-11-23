@@ -123,9 +123,10 @@ def revision() -> str:
 
 def counts() -> dict:
     """Queued and running episodes, for the badge on the Downloads tab."""
-    rows = db.query("SELECT status, COUNT(*) AS n FROM items WHERE status IN ('queued', 'running') GROUP BY status")
+    rows = db.query("SELECT status, COUNT(*) AS n FROM items WHERE status IN ('queued', 'running', 'done') GROUP BY status")
     found = {r["status"]: r["n"] for r in rows}
-    return {"queued": found.get("queued", 0), "running": found.get("running", 0)}
+    # done: so open pages can celebrate when an episode finishes
+    return {"queued": found.get("queued", 0), "running": found.get("running", 0), "done": found.get("done", 0)}
 
 
 def snapshot() -> list[dict]:
