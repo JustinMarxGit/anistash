@@ -123,7 +123,7 @@ const DEFAULT_LOOK = {
   bg_image: { on: false, dim: 45, blur: 0, fit: "cover" },
   font: { heading: "bricolage", body: "onest", size: 100 },
   corners: "soft", density: "comfortable", posters: "m", glass: true,
-  motion: { toggle: "circle", page: "slide", hover: "lift", ambient: "grain", celebrate: true, reduce: "system" },
+  motion: { toggle: "fade", page: "slide", hover: "lift", ambient: "grain", celebrate: true, reduce: "system" },
   files: { background: "", logo: "", avatar: "" },
 };
 // Favourite combinations from Sanzo Wada's "A Dictionary of Color Combinations" (1933); the whole
@@ -313,112 +313,10 @@ async function saveLook(next, opts = {}) {
   } catch (err) { toast(err.message, true); }
 }
 
-// Light ⇄ dark from the button at the top, with the person's chosen animation
-function toggleMode(button) {
-  if (toggleMode.busy) return;
+// Light ⇄ dark from the button at the top: a fade, or instant
+function toggleMode() {
   const next = { ...look, mode: wantsDark(look) ? "light" : "dark" };
-  const how = reduceMotion(look) ? "instant" : look.motion.toggle;
-  if (how === "fade") return saveLook(next, { fade: true });
-  if (how === "instant") return saveLook(next);
-  toggleMode.busy = true;
-  dropIntoWater(button, next).finally(() => { toggleMode.busy = false; });
-}
-
-// "Drop into water", drawn like a cartoon: an outlined drop of the new colour falls onto the
-// button, stretching as it speeds up and squashing flat as it lands, and splashes. The new
-// colours spread out from there, quick at first and then slowing, while bold rings of light and
-// dark roll out behind them and on off the edges of the screen; none of them fade away.
-const settle = (t, k) => (1 - Math.exp(-k * t)) / (1 - Math.exp(-k));
-const frames = (f, n = 24) => Array.from({ length: n + 1 }, (_, i) => ({ ...f(i / n), offset: i / n }));
-
-async function dropIntoWater(button, next) {
-  const r = button.getBoundingClientRect();
-  const x = r.left + r.width / 2, y = r.top + r.height / 2;
-  // A little past the farthest corner, so every ring ends up off the screen
-  const reach = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y)) + 24;
-  const toDark = wantsDark(next);
-  const now = lookTokens(look, !toDark), then = lookTokens(next, toDark);
-  const ink = { dark: toDark ? then["--bg"] : now["--bg"], light: toDark ? now["--bg"] : then["--bg"] };
-
-  // 1. The drop falls, stretching as it speeds up, and squashes flat as it hits
-  const drop = document.createElement("div");
-  drop.className = "water-drop";
-  drop.style.cssText = `left:${x}px;top:${y}px;--c:${then["--bg"]}`;
-  document.body.append(drop);
-  await drop.animate([
-    { transform: "translateY(-150px) scale(.85, 1.15)", easing: "cubic-bezier(.55, 0, 1, .7)" },
-    { transform: "translateY(-6px) scale(.7, 1.45)", offset: 0.78 },
-    { transform: "translateY(0) scale(1.7, .45)", offset: 0.9 },
-    { transform: "translateY(0) scale(2.4, .15)", opacity: 0 },
-  ], { duration: 560, fill: "forwards" }).finished;
-
-  // 2. The splash, and the rings it sends across the page
-  const water = document.createElement("div");
-  water.className = "ripples";
-  const spot = (cls, c, w) => {
-    const el = document.createElement("span");
-    el.className = cls;
-    el.style.cssText = `left:${x}px;top:${y}px;--c:${c}${w ? `;--w:${w}px` : ""}`;
-    water.append(el);
-    return el;
-  };
-  const spread = { duration: 2000, easing: "linear" };
-  const clip = frames((t) => ({ clipPath: `circle(${reach * settle(t, 3.2)}px at ${x}px ${y}px)` }));
-  const ring = (k) => frames((t) => {
-    const d = `${2 * reach * settle(t, k)}px`;
-    return { width: d, height: d, opacity: t ? 1 : 0 };
-  });
-  const splash = () => {
-    const done = [];
-    const run = (el, keyframes, opts) => done.push(el.animate(keyframes, { fill: "both", ...opts }).finished);
-    // The leading ring rides the edge of the new colours; the rest follow, each a little later
-    run(spot("ring", ink.light, 6), ring(3.2), spread);
-    [0, 1, 2, 3].forEach((i) => run(spot("ring", i % 2 ? ink.light : ink.dark, 5 - i), ring(2.8),
-      { duration: 2300 + i * 250, delay: 160 + i * 200, easing: "linear" }));
-    // Droplets thrown up and out, and one that bounces straight up from the middle
-    for (let i = 0; i < 7; i++) {
-      const dx = (i % 2 ? 1 : -1) * (14 + Math.random() * 40), up = 30 + Math.random() * 45, s = 0.6 + Math.random() * 0.6;
-      run(spot("spray", then["--bg"]), [
-        { transform: `translate(0, 0) scale(${s * 0.5})`, easing: "cubic-bezier(.2, .6, .4, 1)" },
-        { transform: `translate(${dx * 0.55}px, ${-up}px) scale(${s})`, offset: 0.45, easing: "cubic-bezier(.6, 0, 1, .6)" },
-        { transform: `translate(${dx}px, 6px) scale(${s * 0.8})`, offset: 0.95 },
-        { transform: `translate(${dx}px, 6px) scale(0)` },
-      ], { duration: 620 + Math.random() * 200, delay: 20 });
-    }
-    run(spot("spray", then["--bg"]), [
-      { transform: "translateY(0) scale(.6, 1.6)", easing: "cubic-bezier(.2, .7, .4, 1)" },
-      { transform: "translateY(-58px) scale(1.5)", offset: 0.45, easing: "cubic-bezier(.6, 0, 1, .6)" },
-      { transform: "translateY(0) scale(1.2, 1.5)", offset: 0.95 },
-      { transform: "translateY(0) scale(0)" },
-    ], { duration: 640, delay: 60 });
-    return Promise.all(done).catch(() => {});
-  };
-
-  if (document.startViewTransition) {
-    // The rings get their own layer in the transition, so they roll out on top of both pages
-    const transition = document.startViewTransition(() => { drop.remove(); applyLook(next); document.body.append(water); });
-    await transition.ready.catch(() => {});
-    document.documentElement.animate(clip, { ...spread, pseudoElement: "::view-transition-new(root)" });
-    const done = splash();
-    await transition.finished.catch(() => {});
-    saveLook(next);
-    await done;
-    water.remove();
-    return;
-  }
-  // Without view transitions: the new background spreads from the drop, then the page switches under it
-  const wipe = document.createElement("div");
-  wipe.className = "theme-wipe";
-  wipe.style.background = then["--bg"];
-  drop.remove();
-  document.body.append(wipe, water);
-  const done = splash();
-  await wipe.animate(clip, { ...spread, fill: "forwards" }).finished;
-  saveLook(next);
-  await wipe.animate({ opacity: [1, 0] }, { duration: 260, fill: "forwards" }).finished;
-  wipe.remove();
-  await done;
-  water.remove();
+  saveLook(next, { fade: !reduceMotion(look) && look.motion.toggle === "fade" });
 }
 
 // A burst of petals from the Downloads tab when one of your downloads finishes
@@ -455,7 +353,7 @@ window.anistash = Object.freeze({ lookTokens, contrast, hexToRgb, CURATED, DEFAU
   paletteFromCombo: (...a) => paletteFromCombo(...a), loadWada: () => loadWada() });
 darkQuery.addEventListener("change", () => applyLook(look, { fade: true }));
 reducedQuery.addEventListener("change", () => applyLook(look));
-document.getElementById("theme-toggle").addEventListener("click", (e) => toggleMode(e.currentTarget));
+document.getElementById("theme-toggle").addEventListener("click", () => toggleMode());
 
 function skeletonPosters(n) {
   return Array.from({ length: n }, (_, k) => `<div class="poster" style="--i:${k}"><div class="art skel"></div><div class="skel skel-line"></div><div class="skel skel-line" style="width:60%"></div></div>`).join("");
@@ -2849,7 +2747,7 @@ function appearanceSection() {
     <div class="card"><h2>Light or dark</h2>
       ${seg("mode", [["system", "Match device"], ["light", "Light"], ["dark", "Dark"]])}
       <h3>When you switch</h3>
-      ${seg("motion.toggle", [["circle", "Drop into water"], ["fade", "Fade"], ["instant", "Instant"]])}
+      ${seg("motion.toggle", [["fade", "Fade"], ["instant", "Instant"]])}
       <p class="hint">How the page changes when you press ${icon("moon")} at the top.</p></div>
 
     <div class="card"><h2>Colours</h2>

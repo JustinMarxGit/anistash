@@ -29,13 +29,13 @@ def test_clean_keeps_only_safe_values():
     raw = {"mode": "dark", "palette": {"combo": 126, "colors": ["#1C4286", "#ebd3a2", "red", "#e2b540", "#000000", "#111111"],
                                        "accent": 9, "tint": 1},
            "tint": 400, "font": {"heading": "url(x)", "body": "serif", "size": 5}, "corners": "round",
-           "motion": {"toggle": "fade", "ambient": "petals", "celebrate": "yes"}, "evil": "<script>",
+           "motion": {"toggle": "instant", "ambient": "petals", "celebrate": "yes"}, "evil": "<script>",
            "bg_image": {"on": True, "dim": -10, "blur": 99, "fit": "stretch"}}
     out = look.clean(raw)
     assert out["mode"] == "dark" and out["corners"] == "round"
     assert out["palette"] == {"combo": 126, "colors": ["#1c4286", "#ebd3a2", "#e2b540", "#000000"], "accent": 0, "tint": 1}
     assert out["tint"] == 100 and out["font"] == {"heading": "bricolage", "body": "serif", "size": 90}
-    assert out["motion"]["toggle"] == "fade" and out["motion"]["ambient"] == "petals" and out["motion"]["celebrate"] is True
+    assert out["motion"]["toggle"] == "instant" and out["motion"]["ambient"] == "petals" and out["motion"]["celebrate"] is True
     assert out["bg_image"] == {"on": True, "dim": 0, "blur": 24, "fit": "cover"}
     assert "evil" not in out
     assert look.clean("not a look") == look.DEFAULT

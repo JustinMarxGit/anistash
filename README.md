@@ -65,7 +65,7 @@ It runs in its own Proxmox LXC, created with one command, and works on phones as
   - **Pictures:** your own background picture (dimmed and blurred to taste), logo and avatar.
   - **Text and shapes:** fonts, text size, corner roundness, spacing and poster size.
   - **Motion:** animations for changing pages, hovering posters (lift, 3D tilt, glow) and switching light/dark (a
-    circle from the button, a fade, or instant), plus drifting colour or falling petals behind the page and a burst
+    fade or instant), plus drifting colour or falling petals behind the page and a burst
     of petals when a download finishes.
   - **Try before you use it:** a sandbox shows your look in light and dark before you keep it.
   - **Share it:** looks can be shared as a code. Admins can make theirs the default for everyone, including the
@@ -186,7 +186,7 @@ Everything under **Settings → Appearance** is per person, and follows you to e
 - **Text and shapes:** heading and text fonts, text size, sharp/soft/round corners, comfortable or compact spacing,
   poster size, and frosted glass on or off.
 - **Motion:**
-  - **Switching light/dark:** a cartoon drop that splashes onto the button (the new colour spreads out, slowing as it goes, with bold rings that roll off the screen), a fade, or instant.
+  - **Switching light/dark:** a fade, or instant.
   - **Changing pages:** slide, fade, zoom or none.
   - **Hovering a poster:** lift, tilt or glow.
   - **Behind the page:** paper grain, drifting colour or falling petals.

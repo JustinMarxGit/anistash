@@ -5,6 +5,14 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "1.4.4",
+        "title": "A quieter switch",
+        "items": [
+            "The drop animation for switching light/dark is gone; switching now fades (the new default) or is instant. "
+            "If you had the drop picked, you'll get the fade.",
+        ],
+    },
+    {
         "version": "1.4.3",
         "title": "Splash!",
         "items": [

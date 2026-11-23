@@ -21,7 +21,7 @@ CHOICES = {
     ("density",): ("comfortable", "compact"),
     ("posters",): ("m", "s", "l"),
     ("bg_image", "fit"): ("cover", "tile"),
-    ("motion", "toggle"): ("circle", "fade", "instant"),
+    ("motion", "toggle"): ("fade", "instant"),
     ("motion", "page"): ("slide", "fade", "zoom", "none"),
     ("motion", "hover"): ("lift", "tilt", "glow", "none"),
     ("motion", "ambient"): ("grain", "drift", "petals", "none"),
@@ -47,7 +47,7 @@ DEFAULT = {
     "density": "comfortable",
     "posters": "m",
     "glass": True,
-    "motion": {"toggle": "circle", "page": "slide", "hover": "lift", "ambient": "grain", "celebrate": True,
+    "motion": {"toggle": "fade", "page": "slide", "hover": "lift", "ambient": "grain", "celebrate": True,
                "reduce": "system"},
 }
 
