@@ -5,6 +5,14 @@ Newest first. Add an entry here for every release (with the VERSION bump).
 
 CHANGELOG = [
     {
+        "version": "1.4.1",
+        "title": "A drop into still water",
+        "items": [
+            "The light/dark circle is now a drop: it falls onto the switch, and the new colours spread across the "
+            "page like water, with light and dark rings rippling out behind.",
+        ],
+    },
+    {
         "version": "1.4.0",
         "title": "Make it yours",
         "items": [

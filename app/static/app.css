@@ -785,6 +785,13 @@ select.small { min-height: 36px; padding: 0 .55rem; font-size: .88rem; }
 /* Switching light/dark: the circle that grows from the button */
 ::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
 .theme-wipe { position: fixed; inset: 0; z-index: 9999; pointer-events: none; }
+/* "Drop into water": the falling drop, and rings spreading over the page */
+.water-drop { position: fixed; z-index: 10001; width: 18px; height: 18px; pointer-events: none;
+  border-radius: 50% 50% 50% 50% / 58% 58% 42% 42%; background: var(--c); box-shadow: 0 0 0 1.5px var(--edge), 0 4px 10px rgb(0 0 0 / 35%); }
+.ripples { position: fixed; inset: 0; z-index: 10000; pointer-events: none; overflow: hidden; view-transition-name: ripples; }
+.ripples i { position: absolute; width: 0; height: 0; border-radius: 50%; transform: translate(-50%, -50%);
+  border: var(--w, 2px) solid var(--c); box-shadow: 0 0 14px -2px var(--c); }
+::view-transition-group(ripples), ::view-transition-old(ripples), ::view-transition-new(ripples) { animation: none; }
 
 /* Celebrating a finished download: petals burst from the Downloads tab */
 .burst { position: fixed; z-index: 90; pointer-events: none; width: 12px; height: 9px; border-radius: 80% 0 80% 0;

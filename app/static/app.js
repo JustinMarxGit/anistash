@@ -315,30 +315,84 @@ async function saveLook(next, opts = {}) {
 
 // Light ⇄ dark from the button at the top, with the person's chosen animation
 function toggleMode(button) {
+  if (toggleMode.busy) return;
   const next = { ...look, mode: wantsDark(look) ? "light" : "dark" };
   const how = reduceMotion(look) ? "instant" : look.motion.toggle;
   if (how === "fade") return saveLook(next, { fade: true });
   if (how === "instant") return saveLook(next);
+  toggleMode.busy = true;
+  dropIntoWater(button, next).finally(() => { toggleMode.busy = false; });
+}
+
+// "Drop into water": a drop of the new colour falls onto the button; where it lands the new
+// colours spread out like water, fast and then slowing, while rings of black and white ripple
+// across the page and fade, like a stone's rings on a still pond.
+async function dropIntoWater(button, next) {
   const r = button.getBoundingClientRect();
   const x = r.left + r.width / 2, y = r.top + r.height / 2;
   const radius = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+  const toDark = wantsDark(next);
+  const now = lookTokens(look, !toDark), then = lookTokens(next, toDark);
+  const ink = { dark: toDark ? then["--bg"] : now["--bg"], light: toDark ? now["--bg"] : then["--bg"] };
+
+  // 1. The drop falls
+  const drop = document.createElement("div");
+  drop.className = "water-drop";
+  drop.style.cssText = `left:${x}px;top:${y}px;--c:${then["--bg"]};--edge:${then["--text"]}`;
+  document.body.append(drop);
+  await drop.animate([
+    { transform: "translate(-50%, -260%) scale(.55, 1.35)", opacity: 0 },
+    { transform: "translate(-50%, -120%) scale(.75, 1.2)", opacity: 1, offset: 0.55 },
+    { transform: "translate(-50%, -50%) scale(1, 1)", offset: 0.85 },
+    { transform: "translate(-50%, -50%) scale(1.7, .45)", opacity: 0.9 },
+  ], { duration: 280, easing: "cubic-bezier(.55, 0, .9, .55)", fill: "forwards" }).finished;
+
+  // 2. Rings spread across the surface, alternating dark and light
+  const rings = document.createElement("div");
+  rings.className = "ripples";
+  rings.innerHTML = [0, 1, 2, 3, 4].map((i) => `<i style="left:${x}px;top:${y}px;--c:${i % 2 ? ink.light : ink.dark};
+    --w:${3 - i * 0.4}px"></i>`).join("");
+  // The new colours spread like water: quick at first, then slowly settling
+  const spread = { duration: 1500, easing: "cubic-bezier(.22, .62, .3, 1)" };
   const clip = [`circle(0px at ${x}px ${y}px)`, `circle(${radius}px at ${x}px ${y}px)`];
+  const ripple = () => [...rings.children].map((ring, i) => {
+    if (i === 0) {  // the first ring is the wet edge of the spreading colour
+      return ring.animate([{ width: "0px", height: "0px", opacity: 1 }, { opacity: 0.85, offset: 0.7 },
+        { width: `${radius * 2}px`, height: `${radius * 2}px`, opacity: 0 }], { ...spread, fill: "both" }).finished;
+    }
+    const size = radius * (0.5 + i * 0.3) * 2;
+    return ring.animate([
+      { width: "0px", height: "0px", opacity: 0.9 },
+      { opacity: 0.6, offset: 0.4 },
+      { width: `${size}px`, height: `${size}px`, opacity: 0 },
+    ], { duration: 1500 + i * 180, delay: 120 + i * 190, easing: "cubic-bezier(.15, .6, .3, 1)", fill: "both" }).finished;
+  });
+
   if (document.startViewTransition) {
-    const transition = document.startViewTransition(() => applyLook(next));
-    transition.ready.then(() => document.documentElement.animate({ clipPath: clip },
-      { duration: 650, easing: "cubic-bezier(.65, 0, .35, 1)", pseudoElement: "::view-transition-new(root)" })).catch(() => {});
-    transition.finished.then(() => saveLook(next));
+    // The rings get their own layer in the transition, so they ripple on top of both pages
+    const transition = document.startViewTransition(() => { drop.remove(); applyLook(next); document.body.append(rings); });
+    await transition.ready.catch(() => {});
+    document.documentElement.animate({ clipPath: clip }, { ...spread, pseudoElement: "::view-transition-new(root)" });
+    const done = ripple();
+    await transition.finished.catch(() => {});
+    saveLook(next);
+    await Promise.all(done).catch(() => {});
+    rings.remove();
     return;
   }
-  // Without view transitions: the new background grows out of the button, then the page switches under it
+  // Without view transitions: the new background spreads from the drop, then the page switches under it
   const wipe = document.createElement("div");
   wipe.className = "theme-wipe";
-  wipe.style.background = lookTokens(next, wantsDark(next))["--bg"];
-  document.body.append(wipe);
-  wipe.animate({ clipPath: clip }, { duration: 600, easing: "cubic-bezier(.65, 0, .35, 1)", fill: "forwards" }).finished.then(() => {
-    saveLook(next);
-    wipe.animate({ opacity: [1, 0] }, { duration: 260, fill: "forwards" }).finished.then(() => wipe.remove());
-  });
+  wipe.style.background = then["--bg"];
+  document.body.append(wipe, rings);
+  drop.remove();
+  const done = ripple();
+  await wipe.animate({ clipPath: clip }, { ...spread, fill: "forwards" }).finished;
+  saveLook(next);
+  await wipe.animate({ opacity: [1, 0] }, { duration: 260, fill: "forwards" }).finished;
+  wipe.remove();
+  await Promise.all(done).catch(() => {});
+  rings.remove();
 }
 
 // A burst of petals from the Downloads tab when one of your downloads finishes
@@ -2769,7 +2823,7 @@ function appearanceSection() {
     <div class="card"><h2>Light or dark</h2>
       ${seg("mode", [["system", "Match device"], ["light", "Light"], ["dark", "Dark"]])}
       <h3>When you switch</h3>
-      ${seg("motion.toggle", [["circle", "Circle from the button"], ["fade", "Fade"], ["instant", "Instant"]])}
+      ${seg("motion.toggle", [["circle", "Drop into water"], ["fade", "Fade"], ["instant", "Instant"]])}
       <p class="hint">How the page changes when you press ${icon("moon")} at the top.</p></div>
 
     <div class="card"><h2>Colours</h2>
